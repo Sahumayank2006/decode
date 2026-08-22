@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DECODE – Document Intelligence</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#0d1117;--surface:#161b22;--card:#1c2128;
+      --border:#30363d;--accent:#58a6ff;--accent2:#3fb950;
+      --warn:#f78166;--text:#e6edf3;--muted:#8b949e;
+      --radius:8px;
+    }
+    body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
+    header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 32px;display:flex;align-items:center;gap:12px}
+    header h1{font-size:1.4rem;font-weight:700;color:var(--accent)}
+    header span{color:var(--muted);font-size:.85rem}
+    .badge{background:#1f6feb33;color:var(--accent);border:1px solid #1f6feb55;padding:2px 8px;border-radius:20px;font-size:.75rem}
+    main{max-width:1100px;margin:0 auto;padding:28px 20px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    @media(max-width:700px){.grid{grid-template-columns:1fr}}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+    .card h2{font-size:1rem;font-weight:600;margin-bottom:14px;color:var(--accent);display:flex;align-items:center;gap:8px}
+    .card h2 .icon{font-size:1.1rem}
+    label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:5px}
+    input[type=file],input[type=text],textarea,select{
+      width:100%;background:var(--bg);border:1px solid var(--border);
+      color:var(--text);padding:9px 12px;border-radius:6px;font-size:.88rem;
+      outline:none;transition:border .2s
+    }
+    input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+    textarea{resize:vertical;min-height:80px;font-family:monospace}
+    .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+    .row input,
+    .row select{flex:1;min-width:100px}
+    button{
+      padding:9px 18px;border:none;border-radius:6px;cursor:pointer;
+      font-size:.88rem;font-weight:600;transition:opacity .2s
+    }
+    button:hover{opacity:.85}
+    button:disabled{opacity:.4;cursor:not-allowed}
+    .btn-primary{background:var(--accent);color:#000}
+    .btn-success{background:var(--accent2);color:#000}
+    .btn-danger{background:var(--warn);color:#fff}
+    .btn-ghost{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+    .progress{display:none;margin-top:10px;height:4px;background:var(--border);border-radius:4px;overflow:hidden}
+    .progress.active{display:block}
+    .progress-bar{height:100%;background:var(--accent);animation:progress-anim 1.5s infinite ease-in-out}
+    @keyframes progress-anim{0%{width:0%}50%{width:70%}100%{width:100%}}
+    .result{margin-top:14px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;
+            font-size:.8rem;font-family:monospace;max-height:340px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+    .tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap}
+    .tab{padding:6px 14px;background:var(--surface);border:1px solid var(--border);
+         border-radius:6px;cursor:pointer;font-size:.82rem;color:var(--muted)}
+    .tab.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+    .tab-panel{display:none}
+    .tab-panel.active{display:block}
+    .graph-img{max-width:100%;border-radius:6px;margin-top:10px}
+    .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-top:10px}
+    .stat-box{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;text-align:center}
+    .stat-box .num{font-size:1.8rem;font-weight:700;color:var(--accent)}
+    .stat-box .lbl{font-size:.75rem;color:var(--muted);margin-top:4px}
+    .doc-list{margin-top:10px;display:flex;flex-direction:column;gap:8px;max-height:300px;overflow-y:auto}
+    .doc-item{display:flex;justify-content:space-between;align-items:center;
+              padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px}
+    .doc-name{font-size:.85rem;color:var(--text)}
+    .doc-meta{font-size:.75rem;color:var(--muted)}
+    .chip{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.72rem;
+          background:#1f6feb22;color:var(--accent);border:1px solid #1f6feb44}
+    .err{color:var(--warn);font-size:.82rem;margin-top:6px}
+    .ok{color:var(--accent2);font-size:.82rem;margin-top:6px}
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>⬡ DECODE</h1>
+  <span>Document Extraction, Classification, OCR &amp; Data Engine</span>
+  <div class="badge">v1.0</div>
+</header>
+
+<main>
+
+  <!-- Upload + Full Pipeline -->
+  <div class="card" style="margin-bottom:20px">
+    <h2><span class="icon">📤</span> Upload &amp; Process Document</h2>
+    <div class="row" style="margin-bottom:10px">
+      <div style="flex:2">
+        <label>File (PDF, DOCX, PNG, JPG, TIFF, TXT...)</label>
+        <input type="file" id="uploadFile" accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.tiff,.bmp,.txt,.csv,.xlsx" />
+      </div>
+      <div>
+        <label>OCR Language</label>
+        <select id="ocrLang">
+          <option value="eng">English</option>
+          <option value="hin">Hindi</option>
+          <option value="eng+hin">Eng + Hindi</option>
+        </select>
+      </div>
+      <div>
+        <label>Graph Layout</label>
+        <select id="graphLayout">
+          <option value="spring">Spring</option>
+          <option value="kamada_kawai">Kamada-Kawai</option>
+          <option value="circular">Circular</option>
+          <option value="spectral">Spectral</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <label style="margin:0;display:flex;align-items:center;gap:5px;color:var(--muted)">
+        <input type="checkbox" id="runNlp" checked /> Run NLP
+      </label>
+      <label style="margin:0;display:flex;align-items:center;gap:5px;color:var(--muted)">
+        <input type="checkbox" id="runGraph" checked /> Extract Graph
+      </label>
+      <button class="btn-primary" onclick="uploadDoc()" id="uploadBtn">⚡ Upload &amp; Process</button>
+    </div>
+    <div class="progress" id="uploadProgress"><div class="progress-bar"></div></div>
+    <div id="uploadStatus"></div>
+
+    <!-- Result Tabs -->
+    <div id="resultSection" style="display:none;margin-top:18px">
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('ocr')">📝 OCR</div>
+        <div class="tab" onclick="switchTab('nlp')">🧠 NLP</div>
+        <div class="tab" onclick="switchTab('graph')">🕸️ Graph</div>
+        <div class="tab" onclick="switchTab('raw')">{ } Raw JSON</div>
+      </div>
+      <div class="tab-panel active" id="tab-ocr">
+        <div id="ocrResult" class="result"></div>
+      </div>
+      <div class="tab-panel" id="tab-nlp">
+        <div id="nlpResult" class="result"></div>
+      </div>
+      <div class="tab-panel" id="tab-graph">
+        <img id="graphImg" class="graph-img" style="display:none" />
+        <div id="graphResult" class="result" style="margin-top:8px"></div>
+      </div>
+      <div class="tab-panel" id="tab-raw">
+        <div id="rawResult" class="result"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- NLP on text -->
+    <div class="card">
+      <h2><span class="icon">🧠</span> NLP on Raw Text</h2>
+      <label>Paste text</label>
+      <textarea id="nlpText" placeholder="Enter or paste text here..."></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn-success" onclick="runNlpText()">Analyse</button>
+        <button class="btn-ghost" onclick="runSummarize()">Summarise</button>
+        <button class="btn-ghost" onclick="runClassify()">Classify</button>
+      </div>
+      <div id="nlpTextResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- Knowledge Graph on text -->
+    <div class="card">
+      <h2><span class="icon">🕸️</span> Knowledge Graph (text)</h2>
+      <label>Paste text</label>
+      <textarea id="graphText" placeholder="Enter text to extract knowledge graph..."></textarea>
+      <div class="row" style="margin-top:8px">
+        <select id="graphLayout2">
+          <option value="spring">Spring</option>
+          <option value="kamada_kawai">Kamada-Kawai</option>
+          <option value="circular">Circular</option>
+        </select>
+        <button class="btn-success" onclick="runGraph()">Extract Graph</button>
+      </div>
+      <img id="graphImg2" class="graph-img" style="display:none;margin-top:8px" />
+      <div id="graphTextResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- Search -->
+    <div class="card">
+      <h2><span class="icon">🔍</span> Search Documents</h2>
+      <div class="row" style="margin-bottom:8px">
+        <input type="text" id="searchQ" placeholder="Search query..." />
+        <select id="searchType">
+          <option value="keyword">Keyword</option>
+          <option value="semantic">Semantic</option>
+          <option value="entity">By Entity</option>
+          <option value="category">By Category</option>
+        </select>
+      </div>
+      <button class="btn-primary" onclick="runSearch()">Search</button>
+      <div id="searchResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- Documents list -->
+    <div class="card">
+      <h2><span class="icon">📂</span> Documents</h2>
+      <div class="row" style="margin-bottom:10px">
+        <button class="btn-ghost" onclick="loadDocuments()">Refresh</button>
+        <button class="btn-ghost" onclick="loadStats()">Stats</button>
+      </div>
+      <div id="statGrid" class="stat-grid" style="display:none"></div>
+      <div class="doc-list" id="docList"><div style="color:var(--muted);font-size:.85rem">Click Refresh to load…</div></div>
+    </div>
+
+  </div><!-- end grid -->
+
+</main>
+
+<script>
+const API = '/api/v1';
+
+/* ─── Tabs ─────────────────────────────────────────────────────── */
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    const tabs=['ocr','nlp','graph','raw'];
+    t.classList.toggle('active', tabs[i]===name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p=>{
+    p.classList.toggle('active', p.id==='tab-'+name);
+  });
+}
+
+/* ─── Helpers ───────────────────────────────────────────────────── */
+function fmt(obj){ return JSON.stringify(obj, null, 2); }
+function setProgress(id, on){ document.getElementById(id).classList.toggle('active',on); }
+function setStatus(id, msg, ok=true){
+  const el=document.getElementById(id);
+  el.innerHTML=`<div class="${ok?'ok':'err'}">${msg}</div>`;
+}
+
+/* ─── Upload ─────────────────────────────────────────────────────── */
+async function uploadDoc(){
+  const file=document.getElementById('uploadFile').files[0];
+  if(!file){ alert('Select a file first'); return; }
+
+  const fd=new FormData();
+  fd.append('file', file);
+  fd.append('lang', document.getElementById('ocrLang').value);
+  fd.append('layout', document.getElementById('graphLayout').value);
+  fd.append('run_nlp', document.getElementById('runNlp').checked?'true':'false');
+  fd.append('run_graph', document.getElementById('runGraph').checked?'true':'false');
+
+  setProgress('uploadProgress', true);
+  setStatus('uploadStatus','Processing…');
+  document.getElementById('uploadBtn').disabled=true;
+  document.getElementById('resultSection').style.display='none';
+
+  try{
+    const res=await fetch(`${API}/upload`,{method:'POST',body:fd});
+    const data=await res.json();
+    setProgress('uploadProgress', false);
+    document.getElementById('uploadBtn').disabled=false;
+
+    if(data.error){ setStatus('uploadStatus','❌ '+data.error, false); return; }
+    setStatus('uploadStatus',`✅ Document processed (ID: ${data.document_id})`);
+
+    // populate tabs
+    const ocr=data.ocr||{};
+    document.getElementById('ocrResult').textContent=
+      `Confidence: ${ocr.confidence}%\nWords: ${ocr.word_count}\n\n${ocr.text||'(no text extracted)'}`;
+
+    const nlp=data.nlp||{};
+    document.getElementById('nlpResult').textContent=fmt(nlp);
+
+    const graph=data.graph||{};
+    const img=document.getElementById('graphImg');
+    if(graph.image_base64){
+      img.src='data:image/png;base64,'+graph.image_base64;
+      img.style.display='block';
+    }else img.style.display='none';
+    const gd={...graph}; delete gd.image_base64;
+    document.getElementById('graphResult').textContent=fmt(gd);
+
+    document.getElementById('rawResult').textContent=fmt({...data, graph:{...data.graph, image_base64:'<base64 omitted>'}});
+
+    document.getElementById('resultSection').style.display='block';
+    switchTab('ocr');
+  }catch(e){
+    setProgress('uploadProgress',false);
+    document.getElementById('uploadBtn').disabled=false;
+    setStatus('uploadStatus','❌ Network error: '+e, false);
+  }
+}
+
+/* ─── NLP on text ────────────────────────────────────────────────── */
+async function runNlpText(){
+  const text=document.getElementById('nlpText').value.trim();
+  if(!text){alert('Enter some text');return;}
+  const el=document.getElementById('nlpTextResult');
+  el.style.display='block'; el.textContent='Processing…';
+  try{
+    const res=await fetch(`${API}/nlp`,{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text})});
+    const d=await res.json();
+    el.textContent=fmt(d);
+  }catch(e){el.textContent='Error: '+e;}
+}
+
+async function runSummarize(){
+  const text=document.getElementById('nlpText').value.trim();
+  if(!text){alert('Enter some text');return;}
+  const el=document.getElementById('nlpTextResult');
+  el.style.display='block'; el.textContent='Summarising…';
+  const res=await fetch(`${API}/nlp/summarize`,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+  el.textContent=fmt(await res.json());
+}
+
+async function runClassify(){
+  const text=document.getElementById('nlpText').value.trim();
+  if(!text){alert('Enter some text');return;}
+  const el=document.getElementById('nlpTextResult');
+  el.style.display='block'; el.textContent='Classifying…';
+  const res=await fetch(`${API}/nlp/classify`,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+  el.textContent=fmt(await res.json());
+}
+
+/* ─── Graph on text ──────────────────────────────────────────────── */
+async function runGraph(){
+  const text=document.getElementById('graphText').value.trim();
+  if(!text){alert('Enter some text');return;}
+  const layout=document.getElementById('graphLayout2').value;
+  const el=document.getElementById('graphTextResult');
+  el.style.display='block'; el.textContent='Building graph…';
+  try{
+    const res=await fetch(`${API}/graph`,{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text, layout, render:true})});
+    const d=await res.json();
+    if(d.image_base64){
+      const img=document.getElementById('graphImg2');
+      img.src='data:image/png;base64,'+d.image_base64;
+      img.style.display='block';
+    }
+    const disp={...d}; delete disp.image_base64;
+    el.textContent=fmt(disp);
+  }catch(e){el.textContent='Error: '+e;}
+}
+
+/* ─── Search ─────────────────────────────────────────────────────── */
+async function runSearch(){
+  const q=document.getElementById('searchQ').value.trim();
+  if(!q){alert('Enter a query');return;}
+  const type=document.getElementById('searchType').value;
+  const el=document.getElementById('searchResult');
+  el.style.display='block'; el.textContent='Searching…';
+
+  let url;
+  if(type==='keyword')   url=`${API}/search?q=${encodeURIComponent(q)}`;
+  else if(type==='semantic') url=`${API}/search/semantic?q=${encodeURIComponent(q)}`;
+  else if(type==='entity')   url=`${API}/search/entity?entity=${encodeURIComponent(q)}`;
+  else                       url=`${API}/search/category?category=${encodeURIComponent(q)}`;
+
+  try{
+    const res=await fetch(url);
+    el.textContent=fmt(await res.json());
+  }catch(e){el.textContent='Error: '+e;}
+}
+
+/* ─── Documents ──────────────────────────────────────────────────── */
+async function loadDocuments(){
+  const list=document.getElementById('docList');
+  list.innerHTML='<div style="color:var(--muted);font-size:.85rem">Loading…</div>';
+  try{
+    const res=await fetch(`${API}/documents`);
+    const d=await res.json();
+    if(!d.documents||d.documents.length===0){
+      list.innerHTML='<div style="color:var(--muted);font-size:.85rem">No documents yet.</div>';
+      return;
+    }
+    list.innerHTML=d.documents.map(doc=>`
+      <div class="doc-item">
+        <div>
+          <div class="doc-name">📄 ${doc.filename||'Untitled'}</div>
+          <div class="doc-meta">${doc.word_count||0} words · ${doc.total_pages||1} page(s) · conf ${doc.confidence||0}%</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="chip">${doc.mime_type||''}</span>
+          <button class="btn-danger" style="padding:4px 10px;font-size:.75rem" onclick="deleteDoc('${doc.id}')">🗑️</button>
+        </div>
+      </div>
+    `).join('');
+  }catch(e){list.innerHTML='<div class="err">Error: '+e+'</div>';}
+}
+
+async function deleteDoc(id){
+  if(!confirm('Delete this document?')) return;
+  await fetch(`${API}/documents/${id}`,{method:'DELETE'});
+  loadDocuments();
+}
+
+async function loadStats(){
+  try{
+    const res=await fetch(`${API}/stats`);
+    const d=await res.json();
+    const grid=document.getElementById('statGrid');
+    grid.style.display='grid';
+    grid.innerHTML=`
+      <div class="stat-box"><div class="num">${d.total_documents||0}</div><div class="lbl">Documents</div></div>
+      <div class="stat-box"><div class="num">${d.total_words||0}</div><div class="lbl">Total Words</div></div>
+      <div class="stat-box"><div class="num">${d.total_pages||0}</div><div class="lbl">Total Pages</div></div>
+      <div class="stat-box"><div class="num">${Object.keys(d.category_distribution||{}).length}</div><div class="lbl">Categories</div></div>
+    `;
+  }catch(e){}
+}
+
+// Auto-load on page ready
+window.addEventListener('DOMContentLoaded', () => {
+  loadDocuments();
+  loadStats();
+});
+</script>
+</body>
+</html>
