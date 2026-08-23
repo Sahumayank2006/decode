@@ -1,6 +1,7 @@
 """
 DECODE – Data Models / Schemas
-Pydantic-based validation models for API request/response objects.
+Dataclass-based validation models for all API request/response objects.
+Covers both the DECODE chart pipeline and legacy OCR/NLP/Graph modules.
 """
 
 from dataclasses import dataclass, field
@@ -8,23 +9,150 @@ from typing import Any, Optional
 from datetime import datetime
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# DECODE Chart Pipeline Models
+# ═════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class BoundingBox:
+    """Bounding box for a detected chart region."""
+    x: int = 0
+    y: int = 0
+    width: int = 0
+    height: int = 0
+
+
+@dataclass
+class DataPoint:
+    """A single data point in a chart series."""
+    label: str = ""
+    value: float = 0.0
+    confidence: float = 0.0
+
+
+@dataclass
+class ChartSeries:
+    """A data series in a chart (e.g. one line, one set of bars)."""
+    name: str = ""
+    color: str = "#333333"
+    points: list = field(default_factory=list)  # list of DataPoint dicts
+
+
+@dataclass
+class AxisLabels:
+    """Axis label metadata extracted from a chart."""
+    x_label: str = ""
+    y_label: str = ""
+    x_ticks: list = field(default_factory=list)
+    y_ticks: list = field(default_factory=list)
+
+
+@dataclass
+class LegendEntry:
+    """A legend entry mapping name to color."""
+    name: str = ""
+    color: str = ""
+
+
+@dataclass
+class ChartDetection:
+    """A detected chart region in a document page."""
+    id: str = ""
+    document_id: str = ""
+    page_number: int = 1
+    bounding_box: dict = field(default_factory=dict)
+    chart_type: str = "other"       # bar | line | pie | scatter | table | other
+    detection_confidence: float = 0.0
+    needs_review: bool = False
+    original_image_path: str = ""
+    original_image_base64: str = ""
+    created_at: str = ""
+
+
+@dataclass
+class ChartExtraction:
+    """Structured data extracted from a chart."""
+    id: str = ""
+    chart_id: str = ""
+    series: list = field(default_factory=list)       # list of ChartSeries dicts
+    axis_labels: dict = field(default_factory=dict)   # AxisLabels dict
+    legend: list = field(default_factory=list)         # list of LegendEntry dicts
+    title: str = ""
+    raw_ocr_text: str = ""
+    extraction_confidence: float = 0.0
+    created_at: str = ""
+
+
+@dataclass
+class ChartReconstruction:
+    """A reconstructed chart (Recharts config + export paths)."""
+    id: str = ""
+    chart_id: str = ""
+    chart_type: str = "bar"
+    chart_config: dict = field(default_factory=dict)   # Recharts-compatible JSON
+    image_base64: str = ""
+    export_svg_path: str = ""
+    export_png_path: str = ""
+    recommended_alt_type: str = ""
+    recommendation_reason: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass
+class ComplianceRecommendation:
+    """A single actionable recommendation from compliance analysis."""
+    id: str = ""
+    text: str = ""
+    category: str = ""          # color | layout | geometry | legal | style | approval
+    auto_applicable: bool = False
+    priority: str = "medium"    # info | medium | high
+
+
+@dataclass
+class ComplianceScore:
+    """Copyright compliance analysis result."""
+    id: str = ""
+    chart_id: str = ""
+    reconstruction_id: str = ""
+    similarity_score: float = 0.0       # 0-100
+    risk_level: str = "low"             # low | medium | high
+    color_similarity: float = 0.0       # 0-100
+    layout_similarity: float = 0.0      # 0-100
+    geometry_similarity: float = 0.0    # 0-100
+    recommendations: list = field(default_factory=list)  # list of ComplianceRecommendation dicts
+    created_at: str = ""
+
+
+@dataclass
+class ProcessingEvent:
+    """A pipeline stage transition event."""
+    id: str = ""
+    document_id: str = ""
+    stage: str = ""             # ingesting | detecting | extracting | reconstructing | scoring | done | failed
+    message: str = ""
+    created_at: str = ""
+
+
 @dataclass
 class DocumentRecord:
-    """Firestore document record."""
+    """Document record stored in Firestore."""
     id: str = ""
     filename: str = ""
     file_path: str = ""
     file_size: int = 0
-    mime_type: str = ""
-    file_hash: str = ""
-    ocr_language: str = "eng"
-    word_count: int = 0
-    char_count: int = 0
-    confidence: float = 0.0
-    total_pages: int = 1
-    status: str = "pending"
+    extension: str = ""
+    status: str = "uploaded"    # uploaded | ingesting | detecting | extracting | reconstructing | scoring | done | failed
+    error_message: str = ""
+    page_count: int = 0
+    summary: dict = field(default_factory=dict)
     created_at: str = ""
+    updated_at: str = ""
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Legacy OCR / NLP / Graph Models (kept for backward compatibility)
+# ═════════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class OCRResult:
@@ -41,35 +169,6 @@ class OCRResult:
 
 
 @dataclass
-class EntityResult:
-    entities: dict = field(default_factory=dict)
-    noun_phrases: list = field(default_factory=list)
-    entity_count: int = 0
-
-
-@dataclass
-class KeywordResult:
-    keyword: str = ""
-    score: float = 0.0
-
-
-@dataclass
-class SummaryResult:
-    summary: str = ""
-    sentences: list = field(default_factory=list)
-    total_sentences: int = 0
-    ratio: float = 0.0
-    scored_sentences: list = field(default_factory=list)
-
-
-@dataclass
-class ClassificationResult:
-    predicted_category: str = ""
-    confidence: float = 0.0
-    all_scores: dict = field(default_factory=dict)
-
-
-@dataclass
 class NLPResult:
     language: dict = field(default_factory=dict)
     entities: dict = field(default_factory=dict)
@@ -80,21 +179,6 @@ class NLPResult:
     word_count: int = 0
     char_count: int = 0
     sentence_count: int = 0
-
-
-@dataclass
-class GraphNode:
-    id: str = ""
-    label: str = ""
-    freq: int = 1
-    degree: int = 0
-
-
-@dataclass
-class GraphEdge:
-    source: str = ""
-    target: str = ""
-    weight: int = 1
 
 
 @dataclass
@@ -111,7 +195,6 @@ class GraphAnalytics:
     is_connected: bool = False
     average_clustering: float = 0.0
     top_nodes_by_degree: list = field(default_factory=list)
-    top_nodes_by_betweenness: list = field(default_factory=list)
     communities: list = field(default_factory=list)
     community_count: int = 0
 
@@ -126,24 +209,3 @@ class ProcessingResponse:
     graph: dict = field(default_factory=dict)
     status: str = "success"
     processed_at: str = ""
-
-
-@dataclass
-class SearchResult:
-    document_id: str = ""
-    filename: str = ""
-    similarity: float = 0.0
-    summary: str = ""
-    matched_entity: str = ""
-    entity_type: str = ""
-    category: str = ""
-    confidence: float = 0.0
-
-
-@dataclass
-class Statistics:
-    total_documents: int = 0
-    total_words: int = 0
-    total_pages: int = 0
-    category_distribution: dict = field(default_factory=dict)
-    entity_type_distribution: dict = field(default_factory=dict)

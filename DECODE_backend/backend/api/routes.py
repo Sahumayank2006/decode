@@ -1,12 +1,18 @@
 """
 DECODE – API Routes
-RESTful endpoints for document upload, processing, search, and analytics.
+RESTful endpoints for:
+  • Document upload & DECODE chart pipeline
+  • Chart CRUD, reconstruction, compliance scoring
+  • Legacy OCR / NLP / Graph endpoints (kept as bonus)
+  • Search & stats
 """
 
 import os
+import uuid
 import logging
+import threading
 from pathlib import Path
-from flask import Blueprint, request, jsonify, send_from_directory
+from flask import Blueprint, request, jsonify, send_from_directory, send_file
 
 from services.document_processor import (
     process_document, get_document, list_documents,
@@ -20,12 +26,19 @@ from services.search_service import (
     keyword_search, search_by_category, search_by_entity,
     semantic_search, get_statistics
 )
+from services.chart_pipeline import (
+    run_chart_pipeline, reconstruct_single_chart, rescore_chart,
+    get_chart_full, list_charts_for_document, get_processing_events,
+    PALETTES,
+)
 from core.ocr_engine import ocr_image, preprocess_image, detect_tables, detect_figures
 from core.nlp_engine import (
     run_full_nlp_pipeline, extract_entities, extract_keywords,
     summarize, classify_document, readability_metrics
 )
 from core.graph_engine import run_graph_pipeline
+from core.chart_reconstructor import render_chart_image, PALETTES as PALETTE_COLORS
+from config.firebase_config import get_db
 
 import cv2
 import numpy as np
@@ -35,7 +48,9 @@ logger = logging.getLogger("decode.api")
 
 api_bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
-UPLOAD_DIR = Path(__file__).resolve().parent.parent / "static" / "uploads"
+BASE_DIR   = Path(__file__).resolve().parent.parent
+UPLOAD_DIR = BASE_DIR / "static" / "uploads"
+EXPORT_DIR = BASE_DIR / "static" / "exports"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,8 +61,8 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent / "static" / "uploads"
 def health():
     return jsonify({
         "status": "ok",
-        "service": "DECODE – Document Intelligence API",
-        "version": "1.0.0",
+        "service": "DECODE – Chart Intelligence API",
+        "version": "2.0.0",
     })
 
 
@@ -55,54 +70,351 @@ def health():
 def info():
     return jsonify({
         "name": "DECODE",
-        "description": "Document Extraction, Classification, OCR & Data Engine",
+        "description": "Detection, Extraction, Compliance-verification, Output-generation, Diagram-reconstruction, and Evaluation",
         "capabilities": [
-            "OCR (Tesseract + OpenCV preprocessing)",
-            "Named Entity Recognition (spaCy)",
-            "Keyword Extraction (TF-IDF)",
-            "Extractive Summarisation",
-            "Document Classification",
-            "Knowledge Graph Extraction",
-            "Readability Metrics",
-            "Semantic Search (sentence-transformers)",
-            "Table & Figure Detection",
-            "Multi-format support (PDF, DOCX, images)",
+            "PDF chart/graph/table detection (OpenCV)",
+            "Chart data extraction (OCR + geometric analysis)",
+            "Interactive chart reconstruction (Recharts-compatible)",
+            "Copyright compliance scoring (SSIM + color + layout)",
+            "Chart type switching (bar/line/pie/heatmap)",
+            "SVG/PNG export",
+            "LLM-powered recommendations (Gemini / rule-based fallback)",
+            "OCR (EasyOCR + OpenCV preprocessing)",
+            "NLP analysis (NER, keywords, summary, classification)",
+            "Knowledge graph extraction",
         ],
-        "endpoints": [
-            "POST /api/v1/upload          – Upload & fully process a document",
-            "POST /api/v1/ocr             – OCR only (image/PDF)",
-            "POST /api/v1/nlp             – NLP only (raw text input)",
-            "POST /api/v1/graph           – Knowledge graph from text",
-            "GET  /api/v1/documents       – List all documents",
-            "GET  /api/v1/documents/<id>  – Get document by ID",
-            "GET  /api/v1/analysis/<id>   – Get NLP analysis for document",
-            "GET  /api/v1/graph/<id>      – Get graph data for document",
-            "DELETE /api/v1/documents/<id> – Delete document",
-            "POST /api/v1/reanalyze/<id> – Re-run NLP/Graph",
-            "GET  /api/v1/search          – Keyword search",
-            "GET  /api/v1/search/semantic – Semantic search",
-            "GET  /api/v1/search/entity   – Entity-based search",
-            "GET  /api/v1/search/category – Category-based search",
-            "GET  /api/v1/stats           – Dashboard statistics",
-        ],
+        "endpoints": {
+            "documents": [
+                "POST   /api/v1/documents/upload         – Upload PDF & start pipeline",
+                "GET    /api/v1/documents                 – List all documents",
+                "GET    /api/v1/documents/<id>            – Get document details",
+                "GET    /api/v1/documents/<id>/status     – Get processing status",
+                "GET    /api/v1/documents/<id>/charts     – List charts in document",
+                "GET    /api/v1/documents/<id>/events     – Get processing events",
+                "DELETE /api/v1/documents/<id>            – Delete document",
+            ],
+            "charts": [
+                "GET    /api/v1/charts/<id>               – Get chart with full data",
+                "POST   /api/v1/charts/<id>/reconstruct   – Reconstruct with new type/data",
+                "POST   /api/v1/charts/<id>/rescore       – Re-run compliance scoring",
+            ],
+            "exports": [
+                "GET    /api/v1/exports/<chart_id>/png    – Download chart as PNG",
+                "GET    /api/v1/exports/<chart_id>/svg    – Download chart as SVG",
+            ],
+            "palettes": [
+                "GET    /api/v1/palettes                  – List available color palettes",
+            ],
+            "legacy": [
+                "POST   /api/v1/ocr        – OCR only",
+                "POST   /api/v1/nlp        – NLP pipeline",
+                "POST   /api/v1/graph      – Knowledge graph",
+            ],
+        },
     })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Upload & full pipeline
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+# DECODE CHART PIPELINE ENDPOINTS
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ─── Document upload & pipeline ──────────────────────────────────────────────
+
+@api_bp.route("/documents/upload", methods=["POST"])
+def upload_and_process():
+    """
+    Upload a PDF and run the full 6-stage DECODE chart pipeline.
+    The pipeline runs in a background thread so this returns immediately.
+
+    Form fields:
+      - file (required): PDF file
+      - run_pipeline (optional, default=true): whether to auto-run pipeline
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    if not allowed_file(file.filename):
+        return jsonify({"error": f"File type not allowed: {file.filename}"}), 400
+
+    try:
+        file_meta = save_uploaded_file(file, file.filename)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    # Create document record
+    doc_id = str(uuid.uuid4())
+    db = get_db()
+    doc_record = {
+        "id": doc_id,
+        "filename": file.filename,
+        "file_path": file_meta["path"],
+        "file_size": file_meta["size"],
+        "extension": file_meta["extension"],
+        "status": "uploaded",
+        "created_at": __import__("datetime").datetime.utcnow().isoformat(),
+        "updated_at": __import__("datetime").datetime.utcnow().isoformat(),
+    }
+    db.collection("documents").document(doc_id).set(doc_record)
+
+    run_pipeline = request.form.get("run_pipeline", "true").lower() == "true"
+
+    if run_pipeline and file_meta["extension"] == "pdf":
+        # Run pipeline in background thread
+        def _run():
+            try:
+                run_chart_pipeline(doc_id, file_meta["path"])
+            except Exception as e:
+                logger.exception("Background pipeline failed: %s", e)
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        return jsonify({
+            "document_id": doc_id,
+            "filename": file.filename,
+            "status": "processing",
+            "message": "PDF uploaded. Chart pipeline is running in the background.",
+        }), 202
+    else:
+        # Non-PDF or pipeline disabled
+        return jsonify({
+            "document_id": doc_id,
+            "filename": file.filename,
+            "status": "uploaded",
+            "message": "File uploaded. Use POST /documents/<id>/process to start the pipeline.",
+        }), 201
+
+
+@api_bp.route("/documents/<doc_id>/process", methods=["POST"])
+def process_doc(doc_id):
+    """Manually trigger the chart pipeline for an uploaded document."""
+    db = get_db()
+    snap = db.collection("documents").document(doc_id).get()
+    if not snap.exists:
+        return jsonify({"error": "Document not found"}), 404
+
+    doc = snap.to_dict()
+    pdf_path = doc.get("file_path")
+    if not pdf_path or not Path(pdf_path).exists():
+        return jsonify({"error": "PDF file not found on server"}), 404
+
+    def _run():
+        try:
+            run_chart_pipeline(doc_id, pdf_path)
+        except Exception as e:
+            logger.exception("Pipeline failed: %s", e)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    return jsonify({
+        "document_id": doc_id,
+        "status": "processing",
+        "message": "Pipeline started.",
+    }), 202
+
+
+# ─── Document CRUD ───────────────────────────────────────────────────────────
+
+@api_bp.route("/documents", methods=["GET"])
+def list_docs():
+    limit = int(request.args.get("limit", 50))
+    db = get_db()
+    docs = []
+    for snap in db.collection("documents").stream():
+        d = snap.to_dict()
+        d["id"] = snap.id
+        docs.append(d)
+    docs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return jsonify({"documents": docs[:limit], "count": len(docs[:limit])})
+
+
+@api_bp.route("/documents/<doc_id>", methods=["GET"])
+def get_doc(doc_id):
+    db = get_db()
+    snap = db.collection("documents").document(doc_id).get()
+    if not snap.exists:
+        return jsonify({"error": "Document not found"}), 404
+    d = snap.to_dict() or {}
+    d["id"] = doc_id
+    return jsonify(d)
+
+
+@api_bp.route("/documents/<doc_id>/status", methods=["GET"])
+def get_doc_status(doc_id):
+    """Get document processing status and events."""
+    db = get_db()
+    snap = db.collection("documents").document(doc_id).get()
+    if not snap.exists:
+        return jsonify({"error": "Document not found"}), 404
+
+    d = snap.to_dict() or {}
+    events = get_processing_events(doc_id)
+
+    return jsonify({
+        "document_id": doc_id,
+        "status": d.get("status", "unknown"),
+        "error_message": d.get("error_message", ""),
+        "summary": d.get("summary", {}),
+        "events": events,
+    })
+
+
+@api_bp.route("/documents/<doc_id>/charts", methods=["GET"])
+def list_doc_charts(doc_id):
+    """List all charts detected in a document."""
+    charts = list_charts_for_document(doc_id)
+    return jsonify({"document_id": doc_id, "charts": charts, "count": len(charts)})
+
+
+@api_bp.route("/documents/<doc_id>/events", methods=["GET"])
+def list_doc_events(doc_id):
+    """Get processing timeline events."""
+    events = get_processing_events(doc_id)
+    return jsonify({"document_id": doc_id, "events": events})
+
+
+@api_bp.route("/documents/<doc_id>", methods=["DELETE"])
+def delete_doc(doc_id):
+    db = get_db()
+    db.collection("documents").document(doc_id).delete()
+    # Also clean up related collections
+    for col in ["charts", "extractions", "reconstructions", "compliance_scores", "processing_events"]:
+        for snap in db.collection(col).where("document_id", "==", doc_id).stream():
+            db.collection(col).document(snap.id).delete()
+        for snap in db.collection(col).where("chart_id", "==", doc_id).stream():
+            db.collection(col).document(snap.id).delete()
+    return jsonify({"deleted": True, "document_id": doc_id})
+
+
+# ─── Chart endpoints ─────────────────────────────────────────────────────────
+
+@api_bp.route("/charts/<chart_id>", methods=["GET"])
+def get_chart(chart_id):
+    """Get a chart with its extraction, reconstruction, and compliance data."""
+    chart = get_chart_full(chart_id)
+    if not chart:
+        return jsonify({"error": "Chart not found"}), 404
+    return jsonify(chart)
+
+
+@api_bp.route("/charts/<chart_id>/reconstruct", methods=["POST"])
+def reconstruct_chart_endpoint(chart_id):
+    """
+    Reconstruct a chart with a new type or edited data.
+    JSON body:
+      - chart_type (optional): "bar" | "line" | "pie" | "heatmap"
+      - series (optional): edited series data
+      - palette (optional): palette name
+    """
+    data = request.get_json(silent=True) or {}
+    new_type = data.get("chart_type")
+    edited_series = data.get("series")
+    palette = data.get("palette", "default")
+
+    result = reconstruct_single_chart(
+        chart_id,
+        new_chart_type=new_type,
+        edited_series=edited_series,
+        palette_name=palette,
+    )
+
+    if "error" in result:
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+@api_bp.route("/charts/<chart_id>/rescore", methods=["POST"])
+def rescore_chart_endpoint(chart_id):
+    """Re-run compliance scoring after user edits."""
+    result = rescore_chart(chart_id)
+    if "error" in result:
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+# ─── Export endpoints ─────────────────────────────────────────────────────────
+
+@api_bp.route("/exports/<chart_id>/png", methods=["GET"])
+def export_png(chart_id):
+    """Download a chart as PNG."""
+    export_path = EXPORT_DIR / chart_id / "chart.png"
+    if not export_path.exists():
+        # Try to generate on-the-fly
+        chart = get_chart_full(chart_id)
+        if not chart or not chart.get("extraction"):
+            return jsonify({"error": "Chart not found"}), 404
+        ext = chart["extraction"]
+        rec = chart.get("reconstruction", {})
+        img_bytes = render_chart_image(
+            series=ext.get("series", []),
+            chart_type=rec.get("chart_type", "bar"),
+            axis_labels=ext.get("axis_labels", {}),
+            title=ext.get("title", ""),
+            output_format="png",
+        )
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(export_path, "wb") as f:
+            f.write(img_bytes)
+
+    return send_file(
+        str(export_path),
+        mimetype="image/png",
+        as_attachment=True,
+        download_name=f"decode_chart_{chart_id[:8]}.png",
+    )
+
+
+@api_bp.route("/exports/<chart_id>/svg", methods=["GET"])
+def export_svg(chart_id):
+    """Download a chart as SVG."""
+    export_path = EXPORT_DIR / chart_id / "chart.svg"
+    if not export_path.exists():
+        chart = get_chart_full(chart_id)
+        if not chart or not chart.get("extraction"):
+            return jsonify({"error": "Chart not found"}), 404
+        ext = chart["extraction"]
+        rec = chart.get("reconstruction", {})
+        img_bytes = render_chart_image(
+            series=ext.get("series", []),
+            chart_type=rec.get("chart_type", "bar"),
+            axis_labels=ext.get("axis_labels", {}),
+            title=ext.get("title", ""),
+            output_format="svg",
+        )
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(export_path, "wb") as f:
+            f.write(img_bytes)
+
+    return send_file(
+        str(export_path),
+        mimetype="image/svg+xml",
+        as_attachment=True,
+        download_name=f"decode_chart_{chart_id[:8]}.svg",
+    )
+
+
+# ─── Palettes ────────────────────────────────────────────────────────────────
+
+@api_bp.route("/palettes", methods=["GET"])
+def list_palettes():
+    """Return available color palettes."""
+    return jsonify({"palettes": PALETTE_COLORS})
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# LEGACY ENDPOINTS (kept for backward compatibility + bonus features)
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ─── Upload (legacy full pipeline) ───────────────────────────────────────────
 
 @api_bp.route("/upload", methods=["POST"])
 def upload_document():
-    """
-    Upload a document and run the full DECODE pipeline.
-    Form fields:
-      - file       (required)
-      - lang       (optional, default=eng)
-      - run_nlp    (optional, default=true)
-      - run_graph  (optional, default=true)
-      - layout     (optional, spring|kamada_kawai|circular, default=spring)
-    """
+    """Legacy upload endpoint — runs OCR + NLP + Graph pipeline."""
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -123,7 +435,6 @@ def upload_document():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    # Generate thumbnail for image files
     ext = file_meta["extension"]
     if ext in ("png", "jpg", "jpeg", "bmp", "tiff", "gif"):
         generate_thumbnail(file_meta["path"])
@@ -144,53 +455,33 @@ def upload_document():
     return jsonify(result), 201
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# OCR only
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── OCR only ────────────────────────────────────────────────────────────────
 
 @api_bp.route("/ocr", methods=["POST"])
 def ocr_endpoint():
-    """
-    Run OCR on an uploaded image or PDF.
-    Returns extracted text + confidence + tables/figures detected.
-    """
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
-
     file = request.files["file"]
-    lang = request.form.get("lang", "eng")
-    preprocess_flag = request.form.get("preprocess", "true").lower() == "true"
-
     try:
         file_meta = save_uploaded_file(file, file.filename)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-
     try:
         from core.ocr_engine import extract_text_from_file
-        result = extract_text_from_file(file_meta["path"], lang=lang)
+        result = extract_text_from_file(file_meta["path"])
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# NLP only (accepts raw text)
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── NLP endpoints ───────────────────────────────────────────────────────────
 
 @api_bp.route("/nlp", methods=["POST"])
 def nlp_endpoint():
-    """
-    Run full NLP pipeline on provided text.
-    JSON body: {"text": "..."}
-    or form field: text=...
-    """
     data = request.get_json(silent=True) or {}
     text = data.get("text") or request.form.get("text", "")
-
     if not text.strip():
         return jsonify({"error": "No text provided"}), 400
-
     try:
         result = run_full_nlp_pipeline(text)
         return jsonify(result)
@@ -198,10 +489,6 @@ def nlp_endpoint():
         logger.exception("NLP error")
         return jsonify({"error": str(e)}), 500
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Individual NLP modules
-# ─────────────────────────────────────────────────────────────────────────────
 
 @api_bp.route("/nlp/entities", methods=["POST"])
 def entities_endpoint():
@@ -242,24 +529,16 @@ def readability_endpoint():
     return jsonify(readability_metrics(text))
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Graph only (accepts raw text)
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Graph ───────────────────────────────────────────────────────────────────
 
 @api_bp.route("/graph", methods=["POST"])
 def graph_endpoint():
-    """
-    Extract knowledge graph from text.
-    JSON body: {"text": "...", "layout": "spring", "render": true}
-    """
     data = request.get_json(silent=True) or {}
     text = data.get("text") or request.form.get("text", "")
     layout = data.get("layout", "spring")
     render = str(data.get("render", "true")).lower() == "true"
-
     if not text.strip():
         return jsonify({"error": "No text provided"}), 400
-
     try:
         result = run_graph_pipeline(text, render=render, layout=layout)
         return jsonify(result)
@@ -268,59 +547,7 @@ def graph_endpoint():
         return jsonify({"error": str(e)}), 500
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Document CRUD
-# ─────────────────────────────────────────────────────────────────────────────
-
-@api_bp.route("/documents", methods=["GET"])
-def list_docs():
-    limit = int(request.args.get("limit", 50))
-    docs = list_documents(limit=limit)
-    return jsonify({"documents": docs, "count": len(docs)})
-
-
-@api_bp.route("/documents/<doc_id>", methods=["GET"])
-def get_doc(doc_id):
-    doc = get_document(doc_id)
-    if not doc:
-        return jsonify({"error": "Document not found"}), 404
-    return jsonify(doc)
-
-
-@api_bp.route("/documents/<doc_id>", methods=["DELETE"])
-def delete_doc(doc_id):
-    result = delete_document(doc_id)
-    return jsonify({"deleted": result, "document_id": doc_id})
-
-
-@api_bp.route("/analysis/<doc_id>", methods=["GET"])
-def get_analysis_route(doc_id):
-    data = get_analysis(doc_id)
-    if not data:
-        return jsonify({"error": "Analysis not found"}), 404
-    return jsonify(data)
-
-
-@api_bp.route("/graph/<doc_id>", methods=["GET"])
-def get_graph_route(doc_id):
-    data = get_graph(doc_id)
-    if not data:
-        return jsonify({"error": "Graph not found"}), 404
-    return jsonify(data)
-
-
-@api_bp.route("/reanalyze/<doc_id>", methods=["POST"])
-def reanalyze_route(doc_id):
-    data = request.get_json(silent=True) or {}
-    run_nlp = data.get("run_nlp", True)
-    run_graph = data.get("run_graph", True)
-    result = reanalyze_document(doc_id, run_nlp=run_nlp, run_graph=run_graph)
-    return jsonify(result)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Search
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Search ──────────────────────────────────────────────────────────────────
 
 @api_bp.route("/search", methods=["GET"])
 def search_route():
@@ -343,66 +570,29 @@ def semantic_search_route():
     return jsonify({"query": q, "results": results, "count": len(results)})
 
 
-@api_bp.route("/search/entity", methods=["GET"])
-def entity_search_route():
-    entity = request.args.get("entity", "")
-    if not entity:
-        return jsonify({"error": "Query 'entity' required"}), 400
-    results = search_by_entity(entity)
-    return jsonify({"entity": entity, "results": results})
-
-
-@api_bp.route("/search/category", methods=["GET"])
-def category_search_route():
-    cat = request.args.get("category", "")
-    if not cat:
-        return jsonify({"error": "Query 'category' required"}), 400
-    results = search_by_category(cat)
-    return jsonify({"category": cat, "results": results})
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stats & uploaded files
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Stats ───────────────────────────────────────────────────────────────────
 
 @api_bp.route("/stats", methods=["GET"])
 def stats_route():
     return jsonify(get_statistics())
 
 
-@api_bp.route("/files", methods=["GET"])
-def list_files_route():
-    return jsonify({"files": list_uploaded_files()})
-
-
-@api_bp.route("/files/<filename>", methods=["DELETE"])
-def delete_file_route(filename):
-    result = delete_file(filename)
-    return jsonify({"deleted": result, "filename": filename})
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Image tools (OpenCV)
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Image tools ─────────────────────────────────────────────────────────────
 
 @api_bp.route("/image/preprocess", methods=["POST"])
 def preprocess_route():
-    """Upload an image and get back the preprocessed version (base64 PNG)."""
-    import base64, io
+    import base64
     if "file" not in request.files:
         return jsonify({"error": "No file"}), 400
-
     file = request.files["file"]
     img_bytes = file.read()
     arr = np.frombuffer(img_bytes, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
         return jsonify({"error": "Could not decode image"}), 400
-
     processed = preprocess_image(img)
     _, buf = cv2.imencode(".png", processed)
     b64 = base64.b64encode(buf.tobytes()).decode()
-
     return jsonify({"image_base64": b64, "format": "png"})
 
 
