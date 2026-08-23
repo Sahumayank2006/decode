@@ -1,12 +1,17 @@
 "use client";
-
 import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+
+import { useRouter, usePathname } from "next/navigation";
 import { motion, useInView } from "framer-motion";
+import { Montserrat } from "next/font/google";
 import {
   FileSearch, BarChart3, ShieldCheck, ArrowRight,
-  Layers, Download, ScanLine
+  Layers, Download, ScanLine, Cpu,
+  Upload, ScanSearch, FileText, Layers3
 } from "lucide-react";
+import { GlowingEffect } from "@/components/ui/glowing-effect";
+
+const montserrat = Montserrat({ subsets: ["latin"], weight: ["300", "400", "500", "700"] });
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ANIMATION VARIANTS
@@ -69,14 +74,46 @@ function Section({
 
 export default function LandingPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
+  const [activeNav, setActiveNav] = useState("Home");
 
-  // Scroll listener for navbar
+  // Scroll listener for navbar & active section spy
   useEffect(() => {
-    const handler = () => setScrolled(window.scrollY > 40);
+    const handler = () => {
+      setScrolled(window.scrollY > 40);
+      
+      const scrollPos = window.scrollY + 300; // offset for better UX
+      if (window.scrollY < 300) {
+        setActiveNav("Home");
+        return;
+      }
+      
+      const sections = [
+        { id: "platform", label: "Home" },
+        { id: "pipeline", label: "How It Works" },
+        { id: "capabilities", label: "Capabilities" },
+        { id: "compliance", label: "Compliance" }
+      ];
+      
+      for (const section of sections) {
+        const el = document.getElementById(section.id);
+        if (el && el.offsetTop <= scrollPos && el.offsetTop + el.offsetHeight > scrollPos) {
+          setActiveNav(section.label);
+        }
+      }
+    };
     window.addEventListener("scroll", handler, { passive: true });
+    handler(); // initial check
     return () => window.removeEventListener("scroll", handler);
   }, []);
+
+  const NAV_ITEMS = [
+    { label: "Home", href: "/" },
+    { label: "How It Works", href: "#pipeline" },
+    { label: "Capabilities", href: "#capabilities" },
+    { label: "Compliance", href: "#compliance" },
+  ];
 
   // Pipeline scroll activation
   const pipelineRef = useRef<HTMLDivElement>(null);
@@ -98,206 +135,156 @@ export default function LandingPage() {
     <div className="bg-navy-900 min-h-screen">
 
       {/* ═══════════════════════════════════════════════════════════════════
-          NAVIGATION
+          PREMIUM GLASS NAVIGATION (DOUBLE SIZE)
           ═══════════════════════════════════════════════════════════════════ */}
-      <nav className={`fixed top-0 w-full z-50 transition-all duration-700 ${
-        scrolled
-          ? "bg-navy-900/90 backdrop-blur-2xl shadow-[0_1px_0_rgba(255,255,255,0.05)]"
-          : "bg-transparent py-4"
-      }`}>
-        <div className="max-w-[1440px] mx-auto px-8 md:px-16 lg:px-24 py-6 flex items-center justify-between">
-          <div className="flex items-center gap-5">
-            <div className="w-10 h-10 bg-brand flex items-center justify-center">
-              <BarChart3 className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <div className="text-xl font-bold tracking-tight text-white leading-none">DECODE</div>
-              <div className="text-[10px] font-semibold tracking-[0.2em] uppercase text-slate-400 mt-1.5 hidden sm:block">
-                Scientific Data Extraction Platform
-              </div>
-            </div>
+      <div className="fixed top-0 left-0 right-0 z-50 flex justify-center pointer-events-none px-4 pt-6 md:pt-10">
+        {/* Subtle atmospheric glow behind the navbar */}
+        <div className={`absolute top-0 w-full max-w-[1800px] h-64 bg-cyan-500/10 blur-[120px] transition-opacity duration-1000 ${scrolled ? 'opacity-100' : 'opacity-0'}`} />
+        
+        <nav 
+          className={`pointer-events-auto relative w-[98%] max-w-[1800px] rounded-[40px] transition-all duration-500 ease-out flex items-center justify-between ${
+            scrolled
+              ? "py-8 px-10 md:px-16 bg-navy-950/70 backdrop-blur-xl border border-white/[0.08] shadow-[0_16px_60px_rgb(0,0,0,0.3)]"
+              : "py-10 px-10 md:px-16 bg-navy-950/30 backdrop-blur-md border border-white/[0.04]"
+          }`}
+        >
+          {/* Brand */}
+          <div className="flex items-center gap-6">
+             <div className="text-cyan-400 flex items-center justify-center">
+               <Cpu className="w-12 h-12 opacity-90" />
+             </div>
+             <div className="flex flex-col justify-center">
+               <div className={`text-[42px] font-light tracking-[0.3em] text-white leading-none ${montserrat.className}`}>
+                 DECODE
+               </div>
+               <div className="text-[12px] font-semibold tracking-[0.25em] text-slate-400 mt-2.5 uppercase hidden sm:block">
+                 Scientific Data Extraction Platform
+               </div>
+             </div>
           </div>
 
-          <div className="hidden lg:flex items-center gap-12 text-[15px] font-medium text-slate-400 tracking-wide">
-            <a href="#platform" className="hover:text-white transition-colors duration-300">Platform</a>
-            <a href="#pipeline" className="hover:text-white transition-colors duration-300">How It Works</a>
-            <a href="#capabilities" className="hover:text-white transition-colors duration-300">Capabilities</a>
-            <a href="#compliance" className="hover:text-white transition-colors duration-300">Compliance</a>
+          {/* Nav Items */}
+          <div className="hidden lg:flex items-center gap-8">
+            {NAV_ITEMS.map(item => (
+              <a 
+                key={item.label}
+                href={item.href}
+                onClick={() => setActiveNav(item.label)}
+                className="group relative px-8 py-4 rounded-xl text-xl font-medium transition-colors duration-300 overflow-hidden"
+              >
+                {/* Hover glass surface */}
+                <div className="absolute inset-0 bg-cyan-400/0 group-hover:bg-cyan-400/10 transition-colors duration-300 rounded-xl" />
+                
+                {/* Scientific signal animation on hover */}
+                <div className="absolute bottom-0 left-0 h-[2px] w-full bg-gradient-to-r from-transparent via-cyan-400 to-transparent -translate-x-[150%] group-hover:translate-x-[150%] transition-transform duration-700 ease-in-out" />
+                
+                {/* Active indicator */}
+                {activeNav === item.label && (
+                  <motion.div 
+                    layoutId="activeNav"
+                    className="absolute bottom-0 left-[20%] right-[20%] h-[3px] bg-cyan-400 shadow-[0_0_16px_rgba(34,211,238,0.6)]"
+                  />
+                )}
+                
+                <span className={`relative z-10 transition-colors duration-300 ${
+                  activeNav === item.label ? "text-white" : "text-slate-400 group-hover:text-slate-200"
+                }`}>
+                  {item.label}
+                </span>
+              </a>
+            ))}
           </div>
 
-          <div className="flex items-center gap-8">
-            <button className="hidden md:block text-[15px] font-medium text-slate-400 hover:text-white transition-colors">
+          {/* Right side CTAs */}
+          <div className="flex items-center gap-12">
+            <button className="hidden md:block text-xl font-medium text-slate-400 hover:text-white transition-colors">
               Sign In
             </button>
             <button
               onClick={() => router.push("/dashboard")}
-              className="px-8 py-3 bg-white text-navy-950 font-semibold text-[15px] hover:bg-slate-100 transition-all duration-300"
+              className="group relative px-12 py-5 rounded-2xl overflow-hidden transition-all duration-300 hover:scale-[1.03] shadow-[0_0_30px_rgba(217,119,6,0.25)] hover:shadow-[0_0_50px_rgba(252,211,77,0.45)]"
             >
-              Get Started
+              <div className="absolute inset-0 bg-gradient-to-r from-yellow-500 via-yellow-300 to-yellow-500 bg-[length:200%_auto] group-hover:bg-right transition-all duration-500" />
+              <span className="relative z-10 flex items-center gap-4 text-navy-950 font-bold text-lg tracking-wide uppercase">
+                Get Started
+                <ArrowRight className="w-6 h-6 group-hover:translate-x-1 transition-transform duration-300" />
+              </span>
             </button>
           </div>
-        </div>
-      </nav>
+        </nav>
+      </div>
 
 
       {/* ═══════════════════════════════════════════════════════════════════
           EXPERIENCE 01: THE HERO — Massive scale
           ═══════════════════════════════════════════════════════════════════ */}
-      <Section className="min-h-[100vh] flex items-center pt-40 bg-grid-dark" id="platform">
-        <div className="grid xl:grid-cols-[1fr_1.2fr] gap-20 items-center w-full">
-          {/* ── Left: Simplified Content ───────────────────────────────── */}
-          <motion.div
-            initial="hidden" animate="visible"
-            variants={{ visible: { transition: { staggerChildren: 0.2 } } }}
+      <section 
+        id="platform"
+        className="relative w-full flex items-center justify-center overflow-hidden pt-[140px] md:pt-[180px]"
+      >
+        {/* Full Viewport Image adapting perfectly to its own aspect ratio */}
+        <img 
+          src="/1.png"
+          alt="Hero Platform"
+          className="w-full h-auto block pointer-events-none"
+        />
+        
+        {/* Subtle Gradient Overlay to ensure the button is always visible */}
+        <div className="absolute inset-0 bg-navy-900/10" />
+
+        {/* Premium CTA Button Overlay */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5, duration: 1, ease: "easeOut" }}
+          className="absolute bottom-16 md:bottom-24 lg:bottom-40 z-10"
+        >
+          <motion.button
+            onClick={() => router.push("/dashboard")}
+            animate={{ 
+              y: [0, -8, 0],
+              boxShadow: [
+                "0px 0px 50px rgba(217,119,6,0.4)",
+                "0px 0px 90px rgba(252,211,77,0.7)",
+                "0px 0px 50px rgba(217,119,6,0.4)"
+              ]
+            }}
+            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="group relative px-24 md:px-32 py-8 md:py-10 rounded-3xl overflow-hidden whitespace-nowrap"
           >
-            <motion.div variants={fadeUp} custom={0}
-              className="text-[12px] font-bold tracking-[0.2em] uppercase text-accent-cyan mb-8"
-            >
-              AI-Powered Scientific Chart Intelligence
-            </motion.div>
-
-            <motion.h1 variants={fadeUp} custom={1}
-              className="text-6xl sm:text-7xl md:text-8xl lg:text-[6.5rem] font-bold leading-[1.05] tracking-tight mb-10"
-            >
-              Extract.<br />
-              Reconstruct.<br />
-              Comply.
-            </motion.h1>
-
-            <motion.p variants={fadeUp} custom={2}
-              className="text-xl md:text-2xl text-slate-400 leading-relaxed max-w-xl mb-16 font-light"
-            >
-              Transform charts and graphs embedded in research papers into
-              editable, structured datasets and interactive visualizations —
-              with built-in compliance analysis for responsible academic reuse.
-            </motion.p>
-
-            <motion.div variants={fadeUp} custom={3} className="flex flex-col sm:flex-row gap-6">
-              <button
-                onClick={() => router.push("/dashboard")}
-                className="px-10 py-5 bg-brand text-white font-semibold text-lg hover:bg-brand-light transition-all duration-300 flex items-center justify-center gap-4"
-              >
-                Start Decoding
-                <ArrowRight className="w-6 h-6" />
-              </button>
-              <button
-                onClick={() => document.getElementById("figure-to-intelligence")?.scrollIntoView({ behavior: "smooth" })}
-                className="px-10 py-5 border border-navy-600 text-slate-300 font-semibold text-lg hover:text-white transition-all duration-300 flex items-center justify-center"
-              >
-                Explore the Platform
-              </button>
-            </motion.div>
-          </motion.div>
-
-          {/* ── Right: ONE Massive Visualization ───────────────────────── */}
-          <motion.div initial="hidden" animate="visible" variants={scaleIn} className="relative w-full h-[600px] xl:h-[750px] bg-navy-950 rounded-2xl border border-navy-700 shadow-2xl overflow-hidden flex items-center justify-center">
-            <div className="absolute inset-0 bg-grid-dark opacity-30" />
+            {/* Premium Gold Gradient Fill */}
+            <div className="absolute inset-0 bg-gradient-to-r from-yellow-500 via-yellow-300 to-yellow-500" />
             
-            {/* The unified product story inside the hero */}
-            <div className="relative z-10 w-[80%] h-[70%] flex gap-8">
-                {/* PDF Enter */}
-                <motion.div 
-                    className="flex-1 bg-white border border-slate-200 p-6 flex flex-col justify-end grayscale opacity-90 shadow-lg"
-                    initial={{ x: -100, opacity: 0 }}
-                    animate={{ x: 0, opacity: 0.9 }}
-                    transition={{ duration: 1.5, ease: "easeOut", delay: 0.5 }}
-                >
-                    <div className="h-6 w-32 bg-slate-200 mb-8" />
-                    <div className="flex items-end gap-2 h-40">
-                        <div className="flex-1 bg-slate-300 h-[40%]" />
-                        <div className="flex-1 bg-slate-300 h-[70%]" />
-                        <div className="flex-1 bg-slate-300 h-[50%]" />
-                        <div className="flex-1 bg-slate-300 h-[90%]" />
-                    </div>
-                    <div className="h-px bg-slate-300 mt-2 w-full" />
-                </motion.div>
-
-                {/* Scan Overlay (Center) */}
-                <motion.div 
-                    className="absolute inset-0 z-20 flex items-center justify-center"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 2.5, duration: 1 }}
-                >
-                    <div className="w-[110%] h-[120%] border-4 border-accent-cyan bg-accent-cyan/10 relative flex items-center justify-center">
-                        <div className="scan-line" />
-                        <div className="px-6 py-3 bg-navy-900 text-accent-cyan font-mono text-xl tracking-widest border border-accent-cyan shadow-[0_0_40px_rgba(6,182,212,0.4)]">
-                            DETECTING CHART REGION
-                        </div>
-                    </div>
-                </motion.div>
-
-                {/* Reconstructed Output */}
-                <motion.div 
-                    className="flex-1 bg-navy-900 border border-brand p-6 flex flex-col justify-end shadow-lg"
-                    initial={{ x: 100, opacity: 0 }}
-                    animate={{ x: 0, opacity: 1 }}
-                    transition={{ duration: 1.5, ease: "easeOut", delay: 4 }}
-                >
-                    <div className="h-6 w-32 bg-brand/20 mb-8" />
-                    <div className="flex items-end gap-2 h-40">
-                        <motion.div className="flex-1 bg-brand h-[40%]" initial={{ height: 0 }} animate={{ height: "40%" }} transition={{ delay: 5 }} />
-                        <motion.div className="flex-1 bg-brand h-[70%]" initial={{ height: 0 }} animate={{ height: "70%" }} transition={{ delay: 5.1 }} />
-                        <motion.div className="flex-1 bg-brand h-[50%]" initial={{ height: 0 }} animate={{ height: "50%" }} transition={{ delay: 5.2 }} />
-                        <motion.div className="flex-1 bg-brand h-[90%]" initial={{ height: 0 }} animate={{ height: "90%" }} transition={{ delay: 5.3 }} />
-                    </div>
-                    <div className="h-px bg-slate-600 mt-2 w-full" />
-                </motion.div>
-            </div>
-          </motion.div>
-        </div>
-      </Section>
+            {/* Hover Shine Sweep */}
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent -translate-x-[150%] group-hover:translate-x-[150%] transition-transform duration-700 ease-in-out" />
+            
+            {/* Button Content */}
+            <span className="relative z-10 flex items-center justify-center gap-6 text-navy-950 font-bold text-3xl md:text-4xl tracking-widest uppercase">
+              Start Decoding
+              <ArrowRight className="w-10 h-10 md:w-12 md:h-12 text-navy-950 group-hover:translate-x-3 transition-transform duration-300" />
+            </span>
+          </motion.button>
+        </motion.div>
+      </section>
 
 
       {/* ═══════════════════════════════════════════════════════════════════
           EXPERIENCE 02: THE TRANSFORMATION
           ═══════════════════════════════════════════════════════════════════ */}
-      <Section id="figure-to-intelligence" dark={false} className="border-t border-slate-200">
-        <motion.div
-          initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.3 }}
-          variants={{ visible: { transition: { staggerChildren: 0.2 } } }}
-          className="text-center mb-32"
-        >
-          <motion.h2 variants={fadeUp} custom={0}
-            className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.1] text-navy-950 mb-8"
-          >
-            From Research Figure<br />
-            <span className="text-brand">to Editable Intelligence.</span>
-          </motion.h2>
-        </motion.div>
-
-        <motion.div
-          initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.3 }}
-          variants={scaleIn}
-          className="w-full aspect-[21/9] bg-slate-50 border border-slate-200 flex items-center justify-between p-12 lg:p-24 shadow-2xl relative"
-        >
-            <div className="w-[30%] h-full bg-white border border-slate-200 shadow-md p-10 grayscale flex flex-col items-center justify-end">
-                <div className="text-slate-400 font-mono text-sm tracking-widest mb-10">ORIGINAL FIGURE</div>
-                <div className="w-full h-px bg-slate-300 mb-2" />
-                <div className="flex items-end gap-4 w-full h-[60%]">
-                    <div className="flex-1 bg-slate-400 h-[80%]" />
-                    <div className="flex-1 bg-slate-400 h-[60%]" />
-                    <div className="flex-1 bg-slate-400 h-[100%]" />
-                </div>
-                <div className="w-full h-px bg-slate-300 mt-2" />
-            </div>
-
-            <div className="flex-1 flex justify-center">
-                <ArrowRight className="w-20 h-20 text-brand opacity-20" />
-            </div>
-
-            <div className="w-[45%] h-full bg-navy-900 border border-navy-800 shadow-2xl p-12 flex flex-col items-center justify-end relative overflow-hidden">
-                <div className="absolute inset-0 bg-grid-dark opacity-10" />
-                <div className="text-brand font-mono text-sm tracking-widest mb-10 z-10">RECONSTRUCTED SVG</div>
-                <div className="flex items-end gap-4 w-full h-[70%] z-10">
-                    <div className="flex-1 bg-brand h-[80%] shadow-[0_0_30px_rgba(37,99,235,0.4)]" />
-                    <div className="flex-1 bg-brand-light h-[60%] shadow-[0_0_30px_rgba(59,130,246,0.4)]" />
-                    <div className="flex-1 bg-accent-cyan h-[100%] shadow-[0_0_30px_rgba(6,182,212,0.4)]" />
-                </div>
-                <div className="w-full h-px bg-slate-700 mt-4 z-10" />
-            </div>
-        </motion.div>
-      </Section>
+      <section 
+        id="figure-to-intelligence"
+        className="relative w-full flex items-center justify-center overflow-hidden bg-navy-950"
+      >
+        <img 
+          src="/2.png"
+          alt="Transformation Pipeline"
+          className="w-full max-h-[85vh] object-cover object-center block pointer-events-none"
+        />
+        
+        <div className="absolute inset-0 bg-navy-900/10 pointer-events-none" />
+      </section>
 
 
       {/* ═══════════════════════════════════════════════════════════════════
@@ -315,157 +302,44 @@ export default function LandingPage() {
           </motion.h2>
         </div>
 
-        <div ref={pipelineRef} className="relative max-w-full">
-          <div className="hidden lg:block absolute top-[40px] left-0 right-0 h-px bg-navy-800" />
-          <div
-            className="hidden lg:block absolute top-[40px] left-0 h-[2px] bg-brand transition-all duration-1000 ease-out"
-            style={{ width: `${Math.max(0, (activePipe / (PIPELINE.length - 1)) * 100)}%` }}
-          />
-
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-16 lg:gap-8">
-            {PIPELINE.map((step, i) => (
-              <motion.div
-                key={step.num}
-                initial="hidden" whileInView="visible" viewport={{ once: true }}
-                variants={fadeUp} custom={i}
-                className="relative text-center lg:text-left flex flex-col items-center lg:items-start"
-              >
-                <div className={`w-20 h-20 mb-8 flex items-center justify-center transition-all duration-700 shrink-0 ${
-                  i <= activePipe
-                    ? "bg-brand text-white"
-                    : "bg-navy-950 text-slate-600 border border-navy-800"
-                }`}>
-                  <step.icon className="w-8 h-8" />
-                </div>
-                <div className="text-sm font-mono text-slate-500 mb-3">{step.num}</div>
-                <h3 className={`text-2xl font-bold tracking-widest transition-colors duration-700 ${
-                  i <= activePipe ? "text-white" : "text-slate-600"
-                }`}>{step.title}</h3>
-              </motion.div>
-            ))}
-          </div>
+        <div className="relative max-w-[1920px] px-6 lg:px-12 mx-auto mt-12 w-full">
+          <GlowingEffectDemoSecond />
         </div>
       </Section>
 
 
       {/* ═══════════════════════════════════════════════════════════════════
-          EXPERIENCE 04: THE PRODUCT (3 Massive Experiences)
+          EXPERIENCE 04: THE PRODUCT
           ═══════════════════════════════════════════════════════════════════ */}
-      <Section id="capabilities" dark={false} className="border-t border-slate-200">
-        <div className="text-center mb-48">
-          <motion.h2 initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={0}
-            className="text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight text-navy-950"
-          >Precision at Every Stage.</motion.h2>
-        </div>
-
-        {/* 1. DETECT & EXTRACT */}
-        <motion.div
-          initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }}
-          variants={{ visible: { transition: { staggerChildren: 0.2 } } }}
-          className="grid lg:grid-cols-[1fr_1.5fr] gap-24 items-center mb-[250px]"
-        >
-          <motion.div variants={fadeUp} custom={0}>
-            <h3 className="text-4xl md:text-5xl font-bold tracking-tight text-navy-950 mb-8">Detect & Extract.</h3>
-            <p className="text-2xl text-slate-500 leading-relaxed font-light">
-              Advanced computer vision identifies chart regions, while morphological analysis and OCR reverse-engineer numerical values and metadata directly from pixel data.
-            </p>
-          </motion.div>
-          <motion.div variants={scaleIn} className="w-full aspect-video bg-slate-100 border border-slate-200 p-8 flex gap-8">
-             <div className="flex-1 bg-white shadow flex items-center justify-center relative">
-                 <div className="absolute inset-4 border-2 border-brand" />
-                 <span className="text-brand font-mono font-bold tracking-widest bg-white px-2">CHART DETECTED</span>
-             </div>
-             <div className="w-[40%] bg-white shadow p-8 font-mono text-lg text-slate-600">
-                 <div className="mb-4 text-slate-400">RAW DATA</div>
-                 <div className="flex justify-between border-b pb-2 mb-2"><span>Var A</span><span className="text-navy-950 font-bold">14.2</span></div>
-                 <div className="flex justify-between border-b pb-2 mb-2"><span>Var B</span><span className="text-navy-950 font-bold">8.7</span></div>
-                 <div className="flex justify-between border-b pb-2 mb-2"><span>Var C</span><span className="text-navy-950 font-bold">22.4</span></div>
-             </div>
-          </motion.div>
-        </motion.div>
-
-        {/* 2. RECONSTRUCT */}
-        <motion.div
-          initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }}
-          variants={{ visible: { transition: { staggerChildren: 0.2 } } }}
-          className="grid lg:grid-cols-[1.5fr_1fr] gap-24 items-center mb-[250px]"
-        >
-          <motion.div variants={scaleIn} className="order-2 lg:order-1 w-full aspect-video bg-navy-900 p-12 flex flex-col justify-end relative shadow-2xl">
-             <div className="absolute top-12 left-12 flex gap-4">
-                 {["BAR", "LINE", "SCATTER", "PIE"].map(t => (
-                     <div key={t} className={`px-6 py-2 border ${t === "BAR" ? "border-brand text-brand" : "border-slate-700 text-slate-500"} font-mono tracking-widest`}>
-                         {t}
-                     </div>
-                 ))}
-             </div>
-             <div className="flex items-end gap-6 w-full h-[60%]">
-                 <div className="flex-1 bg-brand h-[45%]" />
-                 <div className="flex-1 bg-brand h-[80%]" />
-                 <div className="flex-1 bg-brand h-[60%]" />
-                 <div className="flex-1 bg-brand h-[95%]" />
-                 <div className="flex-1 bg-brand h-[30%]" />
-             </div>
-             <div className="w-full h-px bg-slate-700 mt-6" />
-          </motion.div>
-          <motion.div variants={fadeUp} custom={0} className="order-1 lg:order-2">
-            <h3 className="text-4xl md:text-5xl font-bold tracking-tight text-navy-950 mb-8">Reconstruct.</h3>
-            <p className="text-2xl text-slate-500 leading-relaxed font-light">
-              Switch seamlessly between visualization types. The extracted data immediately populates an interactive, editable environment ready for export.
-            </p>
-          </motion.div>
-        </motion.div>
-
-        {/* 3. COMPLY */}
-        <motion.div
-          initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }}
-          variants={{ visible: { transition: { staggerChildren: 0.2 } } }}
-          className="grid lg:grid-cols-[1fr_1.5fr] gap-24 items-center"
-        >
-          <motion.div variants={fadeUp} custom={0}>
-            <h3 className="text-4xl md:text-5xl font-bold tracking-tight text-navy-950 mb-8">Comply.</h3>
-            <p className="text-2xl text-slate-500 leading-relaxed font-light">
-              Automatically calculate Structural Similarity (SSIM), chromatic overlap, and layout risk to ensure responsible academic reuse before you export.
-            </p>
-          </motion.div>
-          <motion.div variants={scaleIn} className="w-full aspect-video bg-slate-50 border border-slate-200 p-12 flex items-center justify-center">
-             <div className="relative w-64 h-64">
-                  <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e2e8f0" strokeWidth="1.5" />
-                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="#10b981" strokeWidth="1.5"
-                      strokeDasharray="92 100" />
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-6xl font-bold text-navy-950">92</span>
-                    <span className="text-sm font-mono text-slate-400 mt-2 tracking-widest">SAFE TO USE</span>
-                  </div>
-              </div>
-          </motion.div>
-        </motion.div>
-      </Section>
-
+      <section 
+        id="capabilities"
+        className="relative w-full flex items-center justify-center overflow-hidden"
+      >
+        <img 
+          src="/3.png"
+          alt="Precision at Every Stage"
+          className="w-full h-auto block pointer-events-none"
+        />
+        
+        <div className="absolute inset-0 bg-navy-900/10 pointer-events-none" />
+      </section>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          EXPERIENCE 05: RESPONSIBLE REUSE (Elevated to its own section)
+          EXPERIENCE 04-B: EXTENDED CAPABILITIES
           ═══════════════════════════════════════════════════════════════════ */}
-      <Section id="compliance" className="border-t border-navy-800 bg-navy-950">
-        <motion.div
-          initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.3 }}
-          variants={{ visible: { transition: { staggerChildren: 0.2 } } }}
-          className="text-center max-w-4xl mx-auto mb-24"
-        >
-          <motion.h2 variants={fadeUp} custom={0}
-            className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.1] mb-10"
-          >
-            Designed for Responsible Scientific Reuse.
-          </motion.h2>
-          <motion.p variants={fadeUp} custom={1}
-            className="text-2xl text-slate-400 leading-relaxed font-light"
-          >
-            DECODE provides technical similarity metrics and workflow guidance;
-            it does not constitute legal advice or guarantee copyright clearance.
-          </motion.p>
-        </motion.div>
-      </Section>
+      <section 
+        className="relative w-full flex items-center justify-center overflow-hidden"
+      >
+        <img 
+          src="/4.png"
+          alt="Extended Capabilities"
+          className="w-full h-auto block pointer-events-none"
+        />
+        
+        <div className="absolute inset-0 bg-navy-900/10 pointer-events-none" />
+      </section>
+
+
 
 
       {/* ═══════════════════════════════════════════════════════════════════
@@ -507,3 +381,73 @@ export default function LandingPage() {
     </div>
   );
 }
+
+export function GlowingEffectDemoSecond() {
+  return (
+    <ul className="grid grid-cols-1 grid-rows-none gap-4 md:grid-cols-12 md:grid-rows-3 lg:gap-4 xl:max-h-[34rem] xl:grid-rows-2">
+
+      {/* STEP 01 — INGEST */}
+      <GridItem
+        area="md:[grid-area:1/1/2/7] xl:[grid-area:1/1/2/5]"
+        imageSrc="/card1.png"
+      />
+
+      {/* STEP 02 — DETECT */}
+      <GridItem
+        area="md:[grid-area:1/7/2/13] xl:[grid-area:2/1/3/5]"
+        imageSrc="/card2.png"
+      />
+
+      {/* STEP 03 — EXTRACT */}
+      <GridItem
+        area="md:[grid-area:2/1/3/7] xl:[grid-area:1/5/3/8]"
+        imageSrc="/card3.png"
+      />
+
+      {/* STEP 04 — RECONSTRUCT */}
+      <GridItem
+        area="md:[grid-area:2/7/3/13] xl:[grid-area:1/8/2/13]"
+        imageSrc="/card4.png"
+      />
+
+      {/* STEP 05 — COMPLY */}
+      <GridItem
+        area="md:[grid-area:3/1/4/7] xl:[grid-area:2/8/3/10]"
+        imageSrc="/card5.png"
+      />
+
+      {/* STEP 06 — EXPORT */}
+      <GridItem
+        area="md:[grid-area:3/7/4/13] xl:[grid-area:2/10/3/13]"
+        imageSrc="/card6.png"
+      />
+
+    </ul>
+  );
+}
+
+const GridItem = ({
+  area,
+  imageSrc,
+}: any) => {
+  return (
+    <li className={`min-h-[14rem] list-none ${area}`}>
+      <div className="relative h-full rounded-2xl border border-white/5 p-2 md:rounded-3xl md:p-3">
+        <GlowingEffect
+          spread={60}
+          glow={true}
+          disabled={false}
+          proximity={64}
+          inactiveZone={0.01}
+        />
+        <div className="border-0.75 relative flex h-full flex-col justify-center items-center overflow-hidden rounded-xl bg-navy-950/20 dark:shadow-[0px_0px_27px_0px_#2D2D2D]">
+          <img 
+            src={imageSrc} 
+            alt="Pipeline Stage" 
+            className="w-full h-full object-cover"
+          />
+        </div>
+      </div>
+    </li>
+  );
+};
