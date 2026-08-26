@@ -2,36 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, BarChart3, PieChart, LineChart, Grid3X3,
-  Download, RefreshCw, Loader2, ShieldCheck, Palette,
-  Check, AlertTriangle, XCircle, ChevronDown,
-  Pencil, Eye, Sparkles, ArrowRight, ScanLine,
+  ArrowLeft, BarChart3, Download, RefreshCw, Loader2, ShieldCheck,
+  Check, AlertTriangle, Eye, Sparkles, ScanLine
 } from "lucide-react";
-import {
-  BarChart, Bar, LineChart as RLineChart, Line, PieChart as RPieChart, Pie,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  Cell,
-} from "recharts";
-import { getChart, reconstructChart, rescoreChart, getExportUrl } from "@/lib/api";
-
-const CHART_TYPES = [
-  { key: "bar",     icon: BarChart3, label: "Bar" },
-  { key: "line",    icon: LineChart, label: "Line" },
-  { key: "pie",     icon: PieChart,  label: "Pie" },
-  { key: "heatmap", icon: Grid3X3,   label: "Heatmap" },
-];
-
-const PALETTE_NAMES = ["default", "vibrant", "pastel", "dark", "academic"];
-
-const PALETTE_PREVIEWS: Record<string, string[]> = {
-  default:  ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f"],
-  vibrant:  ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"],
-  pastel:   ["#b3e2cd", "#fdcdac", "#cbd5e8", "#f4cae4", "#e6f5c9"],
-  dark:     ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e"],
-  academic: ["#2c3e50", "#e74c3c", "#3498db", "#2ecc71", "#f39c12"],
-};
+import { getChart, rescoreChart, getExportUrl } from "@/lib/api";
+import { useChartStore } from "@/store/useChartStore";
+import { reconstructChart as buildCanonicalChart } from "@/lib/chartUtils";
+import { ChartRenderer } from "@/components/chart/ChartRenderer";
 
 function ScoreGauge({ score, risk }: { score: number; risk: string }) {
   const radius = 52;
@@ -67,125 +45,6 @@ function ScoreGauge({ score, risk }: { score: number; risk: string }) {
   );
 }
 
-function RechartsRender({
-  config,
-  chartType,
-}: {
-  config: any;
-  chartType: string;
-}) {
-  if (!config || !config.data || config.data.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full text-slate-500">
-        <span>No chart data available</span>
-      </div>
-    );
-  }
-
-  const series = config.series || [];
-
-  if (chartType === "pie") {
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        <RPieChart>
-          <Pie
-            data={config.data}
-            dataKey="value"
-            nameKey="name"
-            cx="50%"
-            cy="50%"
-            outerRadius="75%"
-            label={({ name, percent }: any) =>
-              `${name}: ${(percent * 100).toFixed(0)}%`
-            }
-            labelLine
-          >
-            {config.data.map((entry: any, i: number) => (
-              <Cell key={i} fill={entry.fill || PALETTE_PREVIEWS.default[i % 5]} />
-            ))}
-          </Pie>
-          <Tooltip
-            contentStyle={{
-              background: "#1a1d2e", border: "1px solid #2e3348",
-              borderRadius: "12px", color: "#e2e8f0",
-            }}
-          />
-          <Legend />
-        </RPieChart>
-      </ResponsiveContainer>
-    );
-  }
-
-  if (chartType === "line") {
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        <RLineChart data={config.data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#2e3348" />
-          <XAxis
-            dataKey="name" tick={{ fill: "#94a3b8", fontSize: 12 }}
-            axisLine={{ stroke: "#2e3348" }}
-          />
-          <YAxis
-            tick={{ fill: "#94a3b8", fontSize: 12 }}
-            axisLine={{ stroke: "#2e3348" }}
-          />
-          <Tooltip
-            contentStyle={{
-              background: "#1a1d2e", border: "1px solid #2e3348",
-              borderRadius: "12px", color: "#e2e8f0",
-            }}
-          />
-          <Legend />
-          {series.map((s: any) => (
-            <Line
-              key={s.dataKey}
-              type="monotone"
-              dataKey={s.dataKey}
-              stroke={s.color}
-              strokeWidth={2.5}
-              dot={{ fill: s.color, r: 4 }}
-              name={s.name}
-            />
-          ))}
-        </RLineChart>
-      </ResponsiveContainer>
-    );
-  }
-
-  // Default: bar
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={config.data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2e3348" />
-        <XAxis
-          dataKey="name" tick={{ fill: "#94a3b8", fontSize: 12 }}
-          axisLine={{ stroke: "#2e3348" }}
-        />
-        <YAxis
-          tick={{ fill: "#94a3b8", fontSize: 12 }}
-          axisLine={{ stroke: "#2e3348" }}
-        />
-        <Tooltip
-          contentStyle={{
-            background: "#1a1d2e", border: "1px solid #2e3348",
-            borderRadius: "12px", color: "#e2e8f0",
-          }}
-        />
-        <Legend />
-        {series.map((s: any) => (
-          <Bar
-            key={s.dataKey}
-            dataKey={s.dataKey}
-            fill={s.color}
-            name={s.name}
-            radius={[4, 4, 0, 0]}
-          />
-        ))}
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
 export default function ChartWorkspacePage() {
   const router = useRouter();
   const params = useParams();
@@ -193,63 +52,31 @@ export default function ChartWorkspacePage() {
 
   const [chart, setChart] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [reconstructing, setReconstructing] = useState(false);
   const [rescoring, setRescoring] = useState(false);
-  const [activeType, setActiveType] = useState("bar");
-  const [activePalette, setActivePalette] = useState("default");
-  const [showPalettes, setShowPalettes] = useState(false);
-  const [tab, setTab] = useState<"preview" | "data" | "compliance">("preview");
+  
+  const setStoreChart = useChartStore(state => state.setChart);
+  const storeChart = useChartStore(state => state.charts[chartId]);
 
   const fetchChart = useCallback(async () => {
     try {
       const data = await getChart(chartId);
       setChart(data);
-      if (data.reconstruction?.chart_type) {
-        setActiveType(data.reconstruction.chart_type);
-      } else if (data.chart_type) {
-        setActiveType(data.chart_type);
+      
+      // Transform into canonical chart format and save in Zustand store
+      if (data.extraction) {
+        const chartType = data.reconstruction?.chart_type || data.chart_type || 'bar';
+        const canonical = buildCanonicalChart(data.extraction, chartType);
+        canonical.id = chartId;
+        setStoreChart(canonical);
       }
     } catch (e) {
       console.error("Failed to fetch chart:", e);
     } finally {
       setLoading(false);
     }
-  }, [chartId]);
+  }, [chartId, setStoreChart]);
 
   useEffect(() => { fetchChart(); }, [fetchChart]);
-
-  const handleTypeSwitch = async (type: string) => {
-    setActiveType(type);
-    setReconstructing(true);
-    try {
-      const result = await reconstructChart(chartId, {
-        chart_type: type,
-        palette: activePalette,
-      });
-      setChart((prev: any) => ({ ...prev, reconstruction: result }));
-    } catch (e) {
-      console.error("Reconstruction failed:", e);
-    } finally {
-      setReconstructing(false);
-    }
-  };
-
-  const handlePaletteChange = async (palette: string) => {
-    setActivePalette(palette);
-    setShowPalettes(false);
-    setReconstructing(true);
-    try {
-      const result = await reconstructChart(chartId, {
-        chart_type: activeType,
-        palette,
-      });
-      setChart((prev: any) => ({ ...prev, reconstruction: result }));
-    } catch (e) {
-      console.error("Palette change failed:", e);
-    } finally {
-      setReconstructing(false);
-    }
-  };
 
   const handleRescore = async () => {
     setRescoring(true);
@@ -272,9 +99,7 @@ export default function ChartWorkspacePage() {
   }
 
   const extraction = chart?.extraction;
-  const reconstruction = chart?.reconstruction;
   const compliance = chart?.compliance;
-  const config = reconstruction?.chart_config;
 
   return (
     <div className="min-h-screen gradient-bg flex flex-col">
@@ -305,14 +130,7 @@ export default function ChartWorkspacePage() {
             download
             className="px-3 py-1.5 rounded-lg glass text-xs font-medium text-slate-300 hover:text-white flex items-center gap-1.5 transition-colors"
           >
-            <Download className="w-3.5 h-3.5" /> PNG
-          </a>
-          <a
-            href={getExportUrl(chartId, "svg")}
-            download
-            className="px-3 py-1.5 rounded-lg glass text-xs font-medium text-slate-300 hover:text-white flex items-center gap-1.5 transition-colors"
-          >
-            <Download className="w-3.5 h-3.5" /> SVG
+            <Download className="w-3.5 h-3.5" /> Original PNG
           </a>
         </div>
       </nav>
@@ -383,124 +201,14 @@ export default function ChartWorkspacePage() {
         </div>
 
         {/* ── Right: Reconstructed chart + controls ───────────────────── */}
-        <div className="lg:w-1/2 flex flex-col gap-4">
-          {/* Chart type switcher + palette */}
-          <div className="glass rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-semibold flex items-center gap-2">
-                <Pencil className="w-4 h-4 text-indigo-400" />
-                Chart Controls
-              </span>
-
-              {/* Palette picker */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowPalettes(!showPalettes)}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg glass text-xs hover:bg-white/5 transition-colors"
-                >
-                  <Palette className="w-3.5 h-3.5" />
-                  <div className="flex gap-0.5">
-                    {(PALETTE_PREVIEWS[activePalette] || PALETTE_PREVIEWS.default).slice(0, 4).map((c, i) => (
-                      <div key={i} className="w-3 h-3 rounded-sm" style={{ background: c }} />
-                    ))}
-                  </div>
-                  <ChevronDown className="w-3 h-3" />
-                </button>
-
-                <AnimatePresence>
-                  {showPalettes && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -5 }}
-                      className="absolute right-0 top-full mt-1 glass-strong rounded-xl p-3 w-52 z-50"
-                    >
-                      {PALETTE_NAMES.map((name) => (
-                        <button
-                          key={name}
-                          onClick={() => handlePaletteChange(name)}
-                          className={`w-full flex items-center gap-2 p-2 rounded-lg text-xs capitalize transition-colors ${
-                            activePalette === name ? "bg-indigo-500/20 text-white" : "hover:bg-white/5 text-slate-300"
-                          }`}
-                        >
-                          <div className="flex gap-0.5">
-                            {PALETTE_PREVIEWS[name]?.map((c, i) => (
-                              <div key={i} className="w-3.5 h-3.5 rounded-sm" style={{ background: c }} />
-                            ))}
-                          </div>
-                          <span>{name}</span>
-                          {activePalette === name && <Check className="w-3 h-3 ml-auto text-indigo-400" />}
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </div>
-
-            {/* Type buttons */}
-            <div className="flex gap-2">
-              {CHART_TYPES.map(({ key, icon: Icon, label }) => (
-                <button
-                  key={key}
-                  onClick={() => handleTypeSwitch(key)}
-                  disabled={reconstructing}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium transition-all duration-200 ${
-                    activeType === key
-                      ? "bg-gradient-to-r from-indigo-600 to-indigo-500 text-white"
-                      : "glass text-slate-400 hover:text-white hover:bg-white/5"
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Reconstructed chart */}
+        <div className="lg:w-1/2 flex flex-col gap-4 overflow-y-auto">
+          {/* Universal Chart Renderer */}
           <div className="glass rounded-2xl p-4 flex-1 flex flex-col">
-            <div className="flex items-center gap-2 mb-3">
-              <BarChart3 className="w-4 h-4 text-cyan-400" />
-              <span className="text-sm font-semibold">Reconstructed Chart</span>
-              {reconstructing && <Loader2 className="w-4 h-4 animate-spin text-indigo-400 ml-auto" />}
-            </div>
-
-            <div className="flex-1 min-h-[300px]">
-              {config ? (
-                <RechartsRender config={config} chartType={activeType} />
-              ) : reconstruction?.image_base64 ? (
-                <div className="w-full h-full flex items-center justify-center">
-                  <img
-                    src={`data:image/png;base64,${reconstruction.image_base64}`}
-                    alt="Reconstructed chart"
-                    className="max-w-full max-h-full object-contain"
-                  />
-                </div>
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-slate-500">
-                  <span>Reconstruction not available</span>
-                </div>
-              )}
-            </div>
-
-            {/* Recommendation */}
-            {reconstruction?.recommended_alt_type &&
-             reconstruction.recommended_alt_type !== activeType && (
-              <div className="mt-3 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs">
-                <div className="flex items-start gap-2">
-                  <Sparkles className="w-4 h-4 text-indigo-400 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <span className="font-medium text-indigo-300">AI Recommendation: </span>
-                    <span className="text-slate-300">{reconstruction.recommendation_reason}</span>
-                    <button
-                      onClick={() => handleTypeSwitch(reconstruction.recommended_alt_type)}
-                      className="ml-2 text-indigo-400 hover:text-indigo-300 font-medium inline-flex items-center gap-1"
-                    >
-                      Try {reconstruction.recommended_alt_type} <ArrowRight className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
+            {storeChart ? (
+              <ChartRenderer chartId={chartId} />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-slate-500">
+                <span>Reconstruction not available</span>
               </div>
             )}
           </div>
@@ -579,16 +287,6 @@ export default function ChartWorkspacePage() {
                             <AlertTriangle className="w-3.5 h-3.5 text-amber-400 mt-0.5 flex-shrink-0" />
                           )}
                           <span className="text-slate-300">{rec.text}</span>
-                          {rec.auto_applicable && rec.id === "change_palette" && (
-                            <button
-                              onClick={() => handlePaletteChange(
-                                activePalette === "default" ? "academic" : "default"
-                              )}
-                              className="ml-auto text-indigo-400 hover:text-indigo-300 font-medium whitespace-nowrap"
-                            >
-                              Apply
-                            </button>
-                          )}
                         </div>
                       ))}
                     </div>

@@ -43,6 +43,27 @@
 
   /* ── Typography ───────────────────────────────────────────────────────── */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Newsreader', Georgia, serif;
+  --font-body: 'IBM Plex Sans', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+
+  /* ── Landing Page Colors ──────────────────────────────────────────────── */
+  --color-ink: #0B1E33;
+  --color-ink-soft: #132C4A;
+  --color-paper: #F7F4EC;
+  --color-paper-dim: #EFEADA;
+  --color-paper-line: #D9D2BC;
+  --color-seal-blue: #1D4E89;
+  --color-seal-blue-deep: #123A5F;
+  --color-verified-green: #2F6F4E;
+  --color-brass: #B08D57;
+  --color-brass-light: #D8BE8E;
+  --color-graphite: #20232A;
+  --color-graphite-soft: #565A61;
+  --color-danger: #8C3B2E;
+
+  /* ── Easing ───────────────────────────────────────────────────────────── */
+  --ease-stamp: cubic-bezier(.2, 1.4, .4, 1);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -165,3 +186,51 @@ body {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NEW LANDING PAGE UTILITIES & ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Stamp Animation */
+@keyframes stampDown {
+  0% { opacity: 0; transform: rotate(-11deg) scale(1.9); }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: rotate(-11deg) scale(1); }
+}
+.animate-stampDown {
+  animation: stampDown 0.7s var(--ease-stamp) forwards;
+}
+
+/* Ring Fill Animation */
+@keyframes ringFill {
+  to { stroke-dashoffset: 60; }
+}
+.animate-ringFill {
+  animation: ringFill 1.6s var(--ease-stamp) 0.3s forwards;
+}
+
+/* Engine Scanline Animation */
+@keyframes engineScan {
+  0% { top: 18%; opacity: 0; }
+  10% { opacity: 1; }
+  50% { top: 78%; opacity: 1; }
+  60% { opacity: 0; }
+  100% { top: 18%; opacity: 0; }
+}
+.animate-engineScan {
+  animation: engineScan 2.6s ease-in-out infinite;
+}
+
+/* Reveal Utilities */
+.reveal {
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.reveal-armed {
+  opacity: 0;
+  transform: translateY(18px);
+}
+.reveal-armed.in {
+  opacity: 1;
+  transform: translateY(0);
+}
+

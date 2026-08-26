@@ -26,13 +26,15 @@ import numpy as np
 
 from config.firebase_config import get_db
 from core.chart_detector import (
-    pdf_to_page_images, detect_charts_in_image, crop_chart_image,
+    pdf_to_page_images, crop_chart_image,
 )
+from core.visual_extractor import VisualExtractor
 from core.chart_extractor import extract_chart_data
 from core.chart_reconstructor import (
     reconstruct_chart, render_chart_image, generate_recharts_config,
     save_chart_export, PALETTES,
 )
+from services.chart_sense_service import analyze_chart_with_sense
 from core.compliance_scorer import score_compliance
 from services.llm_service import get_llm
 
@@ -132,47 +134,92 @@ def _stage_ingest(doc_id: str, pdf_path: str) -> list[np.ndarray]:
 
 def _stage_detect(
     doc_id: str,
+    pdf_path: str,
     page_images: list[np.ndarray],
     confidence_threshold: float = 0.45,
 ) -> list[dict]:
-    """Detect chart regions across all pages."""
+    """Detect chart regions across all pages using native PyMuPDF."""
     _log_event(doc_id, "detecting", "Scanning pages for charts and graphs…")
     _update_doc_status(doc_id, "detecting")
 
     db = get_db()
     all_charts = []
 
-    for i, page_img in enumerate(page_images):
-        detections = detect_charts_in_image(
-            page_img, page_number=i + 1,
-            confidence_threshold=confidence_threshold,
-        )
-        for det in detections:
-            chart_id = str(uuid.uuid4())
+    extractor = VisualExtractor(dpi=200)
+    try:
+        detections = extractor.extract_from_pdf(pdf_path)
+    except Exception as e:
+        logger.error(f"VisualExtractor failed: {e}")
+        detections = []
 
-            # Crop and save the original chart image
-            cropped = crop_chart_image(page_img, det["bounding_box"])
-            fname = f"{chart_id}_original.png"
-            fpath = CHARTS_DIR / fname
-            img_url = _save_image(cropped, fpath)
+    for det in detections:
+        # VisualExtractor returns 1-indexed page_number
+        page_idx = det["page_number"] - 1
+        if page_idx < 0 or page_idx >= len(page_images):
+            continue
+            
+        page_img = page_images[page_idx]
+        
+        # bounding_box is [x0, y0, x1, y1]. detect_charts_in_image returned {x, y, w, h}
+        # Let's convert to {x,y,w,h} dict format expected by rest of pipeline
+        x0, y0, x1, y1 = det["bbox"]
+        bbox_dict = {
+            "x": int(x0),
+            "y": int(y0),
+            "width": int(x1 - x0),
+            "height": int(y1 - y0)
+        }
+        
+        chart_id = str(uuid.uuid4())
 
-            chart_record = {
-                "id": chart_id,
-                "document_id": doc_id,
-                "page_number": det["page_number"],
-                "bounding_box": det["bounding_box"],
-                "chart_type": det["chart_type"],
-                "classification_reason": det.get("reason", ""),
-                "detection_confidence": det["confidence"],
-                "needs_review": det.get("needs_review", False),
-                "original_image_path": img_url,
-                "original_image_base64": _img_to_base64(cropped),
-                "created_at": _ts(),
-            }
+        # Crop and save the original chart image
+        cropped = crop_chart_image(page_img, bbox_dict)
+        
+        # Avoid saving completely empty crops
+        if cropped.size == 0:
+            continue
+            
+        fname = f"{chart_id}_original.png"
+        fpath = CHARTS_DIR / fname
+        img_url = _save_image(cropped, fpath)
 
-            db.collection(COL_CHARTS).document(chart_id).set(chart_record)
-            chart_record["_cropped_image"] = cropped  # keep in memory
-            all_charts.append(chart_record)
+        # Call Chart-Sense for further analysis
+        sense_props = {}
+        if det["type"] in ["chart", "figure"]:
+            # Absolute path needed for analyze_chart
+            abs_img_path = str(fpath.absolute())
+            sense_results = analyze_chart_with_sense(abs_img_path)
+            
+            sense_type = sense_results.get("chart_type", "other_chart")
+            # Override figure to chart if chart-sense detects a chart structure
+            if sense_type != "other_chart" and sense_type != "unknown":
+                # Convert 'bar' to 'bar_chart' etc.
+                if not sense_type.endswith("_chart") and not sense_type.endswith("_plot"):
+                    sense_type = f"{sense_type}_chart"
+                det["type"] = sense_type
+                
+            sense_props = sense_results.get("properties", {})
+
+        chart_record = {
+            "id": chart_id,
+            "document_id": doc_id,
+            "page_number": det["page_number"],
+            "bounding_box": bbox_dict,
+            "chart_type": det["type"],
+            "classification_reason": "Native PDF Extractor + Chart Sense",
+            "detection_confidence": det["confidence"],
+            "needs_review": False,
+            "original_image_path": img_url,
+            "original_image_base64": _img_to_base64(cropped),
+            "chart_sense_properties": sense_props,
+            "created_at": _ts(),
+        }
+
+        db.collection(COL_CHARTS).document(chart_id).set(chart_record)
+        chart_record["_cropped_image"] = cropped  # keep in memory
+        all_charts.append(chart_record)
+
+
 
     _log_event(
         doc_id, "detecting",
@@ -339,7 +386,16 @@ def _stage_score(doc_id: str, reconstructions: list[dict]) -> list[dict]:
         except Exception:
             recon_img = None
 
-        if original_img is not None and recon_img is not None:
+        if recon.get("chart_type") in ["table", "table_chart"]:
+            compliance = _default_score()
+            compliance["recommendations"] = [{
+                "id": "table_extracted",
+                "text": "Tabular data extracted successfully. Copyright risk is low for pure data tables.",
+                "category": "approval",
+                "auto_applicable": False,
+                "priority": "info"
+            }]
+        elif original_img is not None and recon_img is not None and recon_img.size > 0:
             try:
                 compliance = score_compliance(original_img, recon_img)
             except Exception as e:
@@ -469,7 +525,7 @@ def run_chart_pipeline(doc_id: str, pdf_path: str) -> dict:
         page_images = _stage_ingest(doc_id, pdf_path)
 
         # Stage 2: Detect
-        charts = _stage_detect(doc_id, page_images)
+        charts = _stage_detect(doc_id, pdf_path, page_images)
 
         if not charts:
             _log_event(doc_id, "done", "No charts detected in this document.")
@@ -661,8 +717,21 @@ def rescore_chart(chart_id: str) -> dict:
     except Exception:
         recon_img = None
 
-    if original_img is not None and recon_img is not None:
-        compliance = score_compliance(original_img, recon_img)
+    if rec_data.get("chart_type") in ["table", "table_chart"]:
+        compliance = _default_score()
+        compliance["recommendations"] = [{
+            "id": "table_extracted",
+            "text": "Tabular data extracted successfully. Copyright risk is low for pure data tables.",
+            "category": "approval",
+            "auto_applicable": False,
+            "priority": "info"
+        }]
+    elif original_img is not None and recon_img is not None and recon_img.size > 0:
+        try:
+            compliance = score_compliance(original_img, recon_img)
+        except Exception as e:
+            logger.error("Rescoring failed for chart %s: %s", chart_id, e)
+            compliance = _default_score()
     else:
         compliance = _default_score()
 

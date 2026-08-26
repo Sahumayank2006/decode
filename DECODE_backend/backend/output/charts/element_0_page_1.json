@@ -1,0 +1,14 @@
+{
+  "index": 0,
+  "page_number": 1,
+  "bbox": [
+    100.0,
+    100.0,
+    300.0,
+    300.0
+  ],
+  "element_type": "chart",
+  "image_path": "C:\\Users\\licsa\\Downloads\\decode-main\\decode-main\\DECODE_backend\\backend\\output\\charts\\element_0_page_1.png",
+  "confidence": 0.85,
+  "chart_type": "other_chart"
+}

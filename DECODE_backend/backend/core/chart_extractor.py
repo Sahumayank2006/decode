@@ -24,6 +24,8 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from services.llm_service import get_llm, GeminiLLM
+
 logger = logging.getLogger("decode.chart_extractor")
 
 
@@ -103,41 +105,120 @@ def _parse_number(text: str) -> Optional[float]:
 # Axis / label extraction
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _extract_axis_info(ocr_items: list[dict], img_h: int, img_w: int) -> dict:
+def _color_distance(hex1: str, hex2: str) -> float:
+    r1, g1, b1 = int(hex1[1:3], 16), int(hex1[3:5], 16), int(hex1[5:7], 16)
+    r2, g2, b2 = int(hex2[1:3], 16), int(hex2[3:5], 16), int(hex2[5:7], 16)
+    return math.sqrt((r1-r2)**2 + (g1-g2)**2 + (b1-b2)**2)
+
+def _find_x_axis_y(img_bgr: np.ndarray) -> int:
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 220, 255, cv2.THRESH_BINARY_INV)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(img_bgr.shape[1] * 0.1), 1))
+    horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+    
+    contours, _ = cv2.findContours(horizontal, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    y_candidates = []
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w > img_bgr.shape[1] * 0.3 and y < img_bgr.shape[0] * 0.95:
+            y_candidates.append(y)
+            
+    if y_candidates:
+        return max(y_candidates)
+    return int(img_bgr.shape[0] * 0.75)
+
+def _find_legend_pairs(img_bgr: np.ndarray, ocr_items: list[dict]) -> tuple[list[dict], set]:
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 220, 255, cv2.THRESH_BINARY_INV)
+    
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    swatches = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if 50 < area < 2000:
+            x, y, w, h = cv2.boundingRect(cnt)
+            aspect = w / float(max(h, 1))
+            if 0.5 < aspect < 2.0:
+                roi = img_bgr[y:y+h, x:x+w]
+                median_color = np.median(roi.reshape(-1, 3), axis=0)
+                b, g, r = [int(v) for v in median_color]
+                if not (r > 240 and g > 240 and b > 240) and not (r < 30 and g < 30 and b < 30):
+                    color_hex = f"#{r:02x}{g:02x}{b:02x}"
+                    swatches.append({
+                        "x": x, "y": y, "w": w, "h": h,
+                        "cx": x + w//2, "cy": y + h//2,
+                        "color": color_hex
+                    })
+                    
+    legend_pairs = []
+    assigned_texts = set()
+    
+    for swatch in swatches:
+        best_text = None
+        best_dist = 9999
+        best_idx = -1
+        
+        for i, item in enumerate(ocr_items):
+            if i in assigned_texts:
+                continue
+            x1, y1, x2, y2 = item["bbox"]
+            tcx, tcy = (x1+x2)/2, (y1+y2)/2
+            
+            if abs(tcy - swatch["cy"]) < max(swatch["h"], 20):
+                if x1 > swatch["x"] and (x1 - (swatch["x"] + swatch["w"])) < 150:
+                    dist = x1 - (swatch["x"] + swatch["w"])
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_text = item["text"]
+                        best_idx = i
+                        
+        if best_text:
+            legend_pairs.append({
+                "name": best_text,
+                "color": swatch["color"],
+                "text_idx": best_idx
+            })
+            assigned_texts.add(best_idx)
+            
+    return legend_pairs, assigned_texts
+
+def _extract_axis_info(ocr_items: list[dict], img_bgr: np.ndarray) -> dict:
     """
     Partition OCR results into axis labels, tick values, title, and legend text.
-    Uses spatial position heuristics.
+    Uses spatial position heuristics combined with visual swatch detection.
     """
-    x_ticks = []       # text along the bottom
-    y_ticks = []       # numeric text along the left
+    h, w = img_bgr.shape[:2]
+    legend_pairs, legend_text_indices = _find_legend_pairs(img_bgr, ocr_items)
+    x_axis_y = _find_x_axis_y(img_bgr)
+    
+    x_ticks = []
+    y_ticks = []
     title_candidates = []
     x_label = ""
     y_label = ""
-    legend_items = []
-
-    bottom_zone = img_h * 0.75
-    top_zone = img_h * 0.15
-    left_zone = img_w * 0.15
-    right_zone = img_w * 0.75
-
-    for item in ocr_items:
+    
+    top_zone = h * 0.15
+    left_zone = w * 0.15
+    
+    for i, item in enumerate(ocr_items):
+        if i in legend_text_indices:
+            continue
+            
         x1, y1, x2, y2 = item["bbox"]
         cx = (x1 + x2) / 2
         cy = (y1 + y2) / 2
         text = item["text"]
-
-        # Title: text in the top-centre
-        if cy < top_zone and left_zone < cx < (img_w - left_zone):
+        
+        if cy < top_zone and left_zone < cx < (w - left_zone):
             title_candidates.append(text)
-
-        # Y-axis tick values: numeric text on the left side
         elif cx < left_zone and _is_numeric(text):
             val = _parse_number(text)
             if val is not None:
                 y_ticks.append({"text": text, "value": val, "y": cy})
-
-        # X-axis tick labels: text along the bottom
-        elif cy > bottom_zone:
+        elif cx < left_zone * 0.6 and not _is_numeric(text):
+            y_label = text
+        elif cy > x_axis_y - 20 and cy < x_axis_y + 50:
             if _is_numeric(text):
                 val = _parse_number(text)
                 if val is not None:
@@ -145,26 +226,19 @@ def _extract_axis_info(ocr_items: list[dict], img_h: int, img_w: int) -> dict:
             else:
                 x_ticks.append({"text": text, "x": cx})
 
-        # Y-axis label: rotated text far left
-        elif cx < left_zone * 0.6 and not _is_numeric(text):
-            y_label = text
-
-        # Legend items: text in the right zone or bottom-right
-        elif cx > right_zone and cy > bottom_zone * 0.5:
-            legend_items.append(text)
-
-    # Sort ticks by position
     x_ticks.sort(key=lambda t: t["x"])
     y_ticks.sort(key=lambda t: t["y"], reverse=True)
 
-    # X-axis label: the text at the very bottom centre (below x-ticks)
-    # If not found from spatial analysis, leave empty
-    bottom_texts = [item for item in ocr_items
-                    if item["bbox"][3] > img_h * 0.9]
-    for bt in bottom_texts:
-        if not _is_numeric(bt["text"]):
-            x_label = bt["text"]
-            break
+    # X-axis label: lowest text that is NOT a tick, legend, or title
+    bottom_texts = [
+        item for i, item in enumerate(ocr_items)
+        if i not in legend_text_indices
+        and item["bbox"][1] > x_axis_y + 30
+        and not _is_numeric(item["text"])
+    ]
+    if bottom_texts:
+        bottom_texts.sort(key=lambda item: item["bbox"][3], reverse=True)
+        x_label = bottom_texts[0]["text"]
 
     return {
         "title": " ".join(title_candidates) if title_candidates else "",
@@ -173,7 +247,7 @@ def _extract_axis_info(ocr_items: list[dict], img_h: int, img_w: int) -> dict:
         "x_ticks": [t["text"] for t in x_ticks],
         "y_ticks": [t.get("value", 0) for t in y_ticks],
         "y_tick_positions": {t.get("value", 0): t["y"] for t in y_ticks},
-        "legend_texts": legend_items,
+        "legend_pairs": legend_pairs,
     }
 
 
@@ -309,11 +383,19 @@ def _extract_bar_chart(img_bgr: np.ndarray, axis_info: dict) -> dict:
             "points": points,
         })
 
-    # If only one series and we have legend text, use it
-    legend_texts = axis_info.get("legend_texts", [])
+    # Map to legend pairs based on color
+    legend_pairs = axis_info.get("legend_pairs", [])
     for i, s in enumerate(series):
-        if i < len(legend_texts):
-            s["name"] = legend_texts[i]
+        best_name = s["name"]
+        best_dist = 100
+        for lp in legend_pairs:
+            dist = _color_distance(s["color"], lp["color"])
+            if dist < best_dist:
+                best_dist = dist
+                best_name = lp["name"]
+        if best_dist >= 100 and i < len(legend_pairs):
+            best_name = legend_pairs[i]["name"]
+        s["name"] = best_name
 
     avg_conf = 0.75 if y_ticks else 0.5
     return {"series": series, "extraction_confidence": avg_conf}
@@ -388,10 +470,18 @@ def _extract_line_chart(img_bgr: np.ndarray, axis_info: dict) -> dict:
             })
 
     # Apply legend names
-    legend_texts = axis_info.get("legend_texts", [])
+    legend_pairs = axis_info.get("legend_pairs", [])
     for i, s in enumerate(series):
-        if i < len(legend_texts):
-            s["name"] = legend_texts[i]
+        best_name = s["name"]
+        best_dist = 100
+        for lp in legend_pairs:
+            dist = _color_distance(s["color"], lp["color"])
+            if dist < best_dist:
+                best_dist = dist
+                best_name = lp["name"]
+        if best_dist >= 100 and i < len(legend_pairs):
+            best_name = legend_pairs[i]["name"]
+        s["name"] = best_name
 
     return {"series": series, "extraction_confidence": 0.65 if series else 0.0}
 
@@ -450,14 +540,23 @@ def _extract_pie_chart(img_bgr: np.ndarray, axis_info: dict) -> dict:
     segments.sort(key=lambda s: s["percentage"], reverse=True)
 
     # OCR'd labels near the pie
-    legend_texts = axis_info.get("legend_texts", [])
+    legend_pairs = axis_info.get("legend_pairs", [])
 
     # Build series (pie has a single series with multiple points)
     points = []
     for i, seg in enumerate(segments):
-        label = legend_texts[i] if i < len(legend_texts) else f"Segment {i + 1}"
+        best_label = f"Segment {i + 1}"
+        best_dist = 100
+        for lp in legend_pairs:
+            dist = _color_distance(seg["color"], lp["color"])
+            if dist < best_dist:
+                best_dist = dist
+                best_label = lp["name"]
+        if best_dist >= 100 and i < len(legend_pairs):
+            best_label = legend_pairs[i]["name"]
+            
         points.append({
-            "label": label,
+            "label": best_label,
             "value": seg["percentage"],
             "confidence": 0.65,
         })
@@ -516,6 +615,83 @@ def _extract_scatter_chart(img_bgr: np.ndarray, axis_info: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Table extractor (img2table)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_table(img_bgr: np.ndarray, axis_info: dict) -> dict:
+    """Extract table data using img2table."""
+    try:
+        from img2table.document import Image
+        from img2table.ocr import EasyOCR
+    except ImportError:
+        logger.error("img2table is not installed.")
+        return {"series": [], "extraction_confidence": 0.0}
+        
+    success, buffer = cv2.imencode('.png', img_bgr)
+    if not success:
+        return {"series": [], "extraction_confidence": 0.0}
+        
+    img = Image(src=buffer.tobytes())
+    ocr = EasyOCR(lang=["en"])
+    
+    extracted_tables = img.extract_tables(
+        ocr=ocr, 
+        implicit_rows=True, 
+        borderless_tables=True, 
+        min_confidence=50
+    )
+    
+    if not extracted_tables:
+        return {"series": [], "extraction_confidence": 0.0}
+        
+    # Take the largest table by area
+    table = max(extracted_tables, key=lambda t: t.bbox.y2 - t.bbox.y1)
+    df = table.df
+    
+    if df.empty or len(df.columns) < 2:
+        return {"series": [], "extraction_confidence": 0.0}
+        
+    # If columns are just integers, promote the first row to header
+    if list(df.columns) == list(range(len(df.columns))):
+        df.columns = df.iloc[0].astype(str)
+        df = df[1:].reset_index(drop=True)
+        
+    categories = df.iloc[:, 0].fillna("").astype(str).tolist()
+    
+    series = []
+    # Distinct colors for series
+    colors = ["#4e79a7", "#f28e2c", "#e15759", "#76b7b2", "#59a14f", "#edc949", "#af7aa1", "#ff9da7", "#9c755f", "#bab0ab"]
+    
+    for i, col in enumerate(df.columns[1:]):
+        col_name = str(col)
+        if not col_name.strip() or col_name == "nan":
+            col_name = f"Column {i+1}"
+            
+        points = []
+        for j, val in enumerate(df[col]):
+            clean_val = str(val).replace(',', '').replace(' ', '').strip() if val else None
+            try:
+                num_val = float(clean_val)
+            except (ValueError, TypeError):
+                num_val = None
+                
+            label = categories[j] if j < len(categories) else f"Row {j+1}"
+            points.append({
+                "label": str(label),
+                "value": num_val,
+                "confidence": 0.85
+            })
+            
+        series.append({
+            "name": col_name,
+            "color": colors[i % len(colors)],
+            "points": points
+        })
+        
+    return {"series": series, "extraction_confidence": 0.90}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -525,6 +701,8 @@ _EXTRACTORS = {
     "line_chart": _extract_line_chart,
     "pie_chart": _extract_pie_chart,
     "scatter_plot": _extract_scatter_chart,
+    "table": _extract_table,
+    "table_chart": _extract_table,
     "bar": _extract_bar_chart,  # backwards compatibility
     "line": _extract_line_chart,
     "pie": _extract_pie_chart,
@@ -554,13 +732,23 @@ def extract_chart_data(
     """
     h, w = cropped_image.shape[:2]
     logger.info("Extracting %s chart data from %dx%d image", chart_type, w, h)
+    
+    llm = get_llm()
+    if isinstance(llm, GeminiLLM):
+        logger.info("[extraction] path=llm")
+    else:
+        logger.info("[extraction] path=fallback")
 
     # Step 1: OCR all text in the chart
     ocr_items = _ocr_region(cropped_image)
     raw_text = "\n".join(item["text"] for item in ocr_items)
+    
+    # Debug logging for OCR as requested in Step 2
+    logger.info("Raw OCR items for chart extraction: %s", 
+                [{"text": item["text"], "bbox": item["bbox"]} for item in ocr_items])
 
-    # Step 2: Parse axis info from OCR results
-    axis_info = _extract_axis_info(ocr_items, h, w)
+    # Step 2: Parse axis info from OCR results (now using BGR image for swatches/axis detection)
+    axis_info = _extract_axis_info(ocr_items, cropped_image)
 
     # Step 3: Run the chart-type-specific extractor, or skip if unsupported (like flowchart)
     extractor = _EXTRACTORS.get(chart_type)
@@ -572,7 +760,27 @@ def extract_chart_data(
 
     # Step 4: Compose the result
     series = extraction.get("series", [])
-    legend = [{"name": s["name"], "color": s["color"]} for s in series]
+    
+    # Calculate a real confidence score (Step 4)
+    confidence = 0.0
+    if series:
+        has_x = bool(axis_info.get("x_ticks") or axis_info.get("x_label"))
+        has_y = bool(axis_info.get("y_ticks") or axis_info.get("y_label"))
+        # Base confidence from extractor (usually 0.5 - 0.75)
+        base_conf = extraction.get("extraction_confidence", 0.5)
+        # Bonus for having axis and legend
+        bonus = 0.0
+        if has_x: bonus += 0.1
+        if has_y: bonus += 0.1
+        if axis_info.get("legend_pairs"): bonus += 0.1
+        if axis_info.get("title"): bonus += 0.05
+        confidence = min(0.95, base_conf + bonus)
+        
+    legend = []
+    for s in series:
+        legend.append({"name": s["name"], "color": s["color"]})
+    if not legend and axis_info.get("legend_pairs"):
+        legend = [{"name": lp["name"], "color": lp["color"]} for lp in axis_info.get("legend_pairs")]
 
     result = {
         "series": series,
@@ -585,7 +793,7 @@ def extract_chart_data(
         "legend": legend,
         "title": axis_info.get("title", ""),
         "raw_ocr_text": raw_text,
-        "extraction_confidence": extraction.get("extraction_confidence", 0.0),
+        "extraction_confidence": confidence,
     }
 
     logger.info(

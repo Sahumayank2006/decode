@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DECODE — Scientific Data Extraction Protocol</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;1,400;1,500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ================= TOKENS ================= */
+  :root{
+    --ink:#0B1E33;
+    --ink-soft:#132C4A;
+    --paper:#F7F4EC;
+    --paper-dim:#EFEADA;
+    --paper-line:#D9D2BC;
+    --seal-blue:#1D4E89;
+    --seal-blue-deep:#123A5F;
+    --verified-green:#2F6F4E;
+    --brass:#B08D57;
+    --brass-light:#D8BE8E;
+    --graphite:#20232A;
+    --graphite-soft:#565A61;
+    --white:#FFFFFF;
+    --danger:#8C3B2E;
+
+    --font-display:'Newsreader', Georgia, serif;
+    --font-body:'IBM Plex Sans', -apple-system, sans-serif;
+    --font-mono:'IBM Plex Mono', monospace;
+
+    --container:1180px;
+    --radius-sm:4px;
+    --radius-md:8px;
+    --ease-stamp: cubic-bezier(.2,1.4,.4,1);
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  @media (prefers-reduced-motion: reduce){
+    html{scroll-behavior:auto;}
+    *,*::before,*::after{animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important; scroll-behavior:auto !important;}
+  }
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--graphite);
+    font-family:var(--font-body);
+    font-size:16px;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  img,svg{display:block; max-width:100%;}
+  a{color:inherit;}
+  ::selection{background:var(--brass); color:var(--ink);}
+
+  :focus-visible{
+    outline:2px solid var(--seal-blue);
+    outline-offset:3px;
+    border-radius:2px;
+  }
+
+  .wrap{
+    max-width:var(--container);
+    margin:0 auto;
+    padding:0 32px;
+  }
+  @media (max-width:640px){ .wrap{padding:0 20px;} }
+
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:11.5px;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:var(--seal-blue);
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-weight:500;
+  }
+  .eyebrow::before{
+    content:'';
+    width:22px; height:1px;
+    background:var(--seal-blue);
+    display:inline-block;
+  }
+  .eyebrow.on-dark{color:var(--brass-light);}
+  .eyebrow.on-dark::before{background:var(--brass-light);}
+
+  h1,h2,h3{
+    font-family:var(--font-display);
+    font-weight:500;
+    margin:0;
+    letter-spacing:-0.01em;
+  }
+  .italic{font-style:italic; color:var(--brass); font-weight:500;}
+
+  .btn{
+    display:inline-flex;
+    align-items:center;
+    gap:10px;
+    font-family:var(--font-mono);
+    font-size:13px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    font-weight:500;
+    padding:15px 26px;
+    border-radius:2px;
+    text-decoration:none;
+    cursor:pointer;
+    border:1px solid transparent;
+    transition:transform .25s var(--ease-stamp), box-shadow .25s ease, background .25s ease;
+    position:relative;
+    isolation:isolate;
+  }
+  .btn-seal{
+    background:linear-gradient(180deg,#C9A86A, var(--brass) 55%, #9A7842);
+    color:var(--ink);
+    box-shadow:0 1px 0 rgba(255,255,255,.4) inset, 0 8px 20px -8px rgba(176,141,87,.65);
+  }
+  .btn-seal:hover{ transform:translateY(-2px); box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 14px 26px -10px rgba(176,141,87,.8); }
+  .btn-seal:active{ transform:translateY(0); }
+  .btn-seal::after{
+    content:'';
+    position:absolute; top:0; left:0; right:0; bottom:0;
+    border-radius:2px;
+    border:1px solid rgba(255,255,255,.35);
+    pointer-events:none;
+  }
+  .btn-ghost{
+    background:transparent;
+    color:var(--ink);
+    border:1px solid var(--paper-line);
+  }
+  .btn-ghost:hover{ border-color:var(--seal-blue); color:var(--seal-blue); }
+  .btn-ghost.on-dark{ color:var(--paper); border-color:rgba(247,244,236,.28); }
+  .btn-ghost.on-dark:hover{ border-color:var(--brass-light); color:var(--brass-light); }
+
+  /* ================= NAV ================= */
+  header.site{
+    position:sticky; top:0; z-index:50;
+    background:rgba(11,30,51,.92);
+    backdrop-filter:blur(10px);
+    border-bottom:1px solid rgba(216,190,142,.18);
+  }
+  .nav-inner{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 0;
+  }
+  .brand{ display:flex; align-items:center; gap:12px; text-decoration:none; }
+  .brand svg{ width:34px; height:34px; }
+  .brand-text{ color:var(--paper); }
+  .brand-text .name{ font-family:var(--font-display); font-size:19px; letter-spacing:.02em; font-weight:600; display:block; }
+  .brand-text .tag{ font-family:var(--font-mono); font-size:9.5px; letter-spacing:.14em; color:var(--brass-light); display:block; margin-top:1px; }
+
+  nav.links{ display:flex; gap:34px; }
+  nav.links a{
+    color:var(--paper); opacity:.75;
+    text-decoration:none; font-size:14px; font-weight:500;
+    letter-spacing:.01em;
+    margin-left:34px;
+    transition:opacity .2s ease;
+  }
+  nav.links a:first-child{ margin-left:0; }
+  nav.links a:hover{ opacity:1; }
+
+  .nav-actions{ display:flex; align-items:center; gap:20px; }
+  .nav-actions .signin{ color:var(--paper); opacity:.8; text-decoration:none; font-size:14px; }
+  .nav-actions .btn{ padding:11px 20px; font-size:12px; }
+
+  .nav-toggle{ display:none; background:none; border:none; color:var(--paper); font-size:22px; cursor:pointer; }
+  @media (max-width: 880px){
+    nav.links, .nav-actions .signin{ display:none; }
+    .nav-toggle{ display:block; }
+  }
+
+  /* ================= HERO ================= */
+  .hero{
+    background:
+      radial-gradient(1200px 600px at 15% -10%, rgba(216,190,142,.10), transparent 60%),
+      linear-gradient(180deg, var(--ink) 0%, var(--ink-soft) 100%);
+    color:var(--paper);
+    padding:88px 0 110px;
+    position:relative;
+    overflow:hidden;
+  }
+  .hero::before{
+    content:'';
+    position:absolute; top:0; left:0; right:0; bottom:0;
+    background-image:
+      linear-gradient(rgba(247,244,236,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(247,244,236,.035) 1px, transparent 1px);
+    background-size:64px 64px;
+    mask-image:radial-gradient(circle at 20% 20%, black, transparent 70%);
+    pointer-events:none;
+  }
+  .hero-grid{
+    position:relative; z-index:1;
+    display:flex;
+    flex-direction:column;
+    gap:56px;
+  }
+  .hero-grid > div:first-child{ width:100%; }
+  .hero-grid > .cert{ width:100%; }
+  @media (min-width:980px){
+    .hero-grid{ flex-direction:row; align-items:center; }
+    .hero-grid > div:first-child{ flex:0 0 46%; max-width:46%; }
+    .hero-grid > .cert{ flex:1; }
+  }
+
+  .protocol-no{
+    font-family:var(--font-mono); font-size:11px; color:rgba(247,244,236,.55);
+    letter-spacing:.1em; margin-bottom:22px;
+  }
+  .hero h1{
+    font-size:clamp(42px, 6.4vw, 68px);
+    line-height:1.02;
+    color:var(--paper);
+    margin-top:18px;
+  }
+  .hero p.lede{
+    margin-top:26px;
+    max-width:480px;
+    color:rgba(247,244,236,.72);
+    font-size:16.5px;
+    line-height:1.65;
+  }
+  .hero-ctas{ display:flex; gap:18px; align-items:center; margin-top:38px; flex-wrap:wrap; }
+  .hero-ctas .link-arrow{
+    font-family:var(--font-mono); font-size:12.5px; letter-spacing:.05em;
+    color:rgba(247,244,236,.65); text-decoration:none;
+    display:flex; align-items:center; gap:8px;
+  }
+  .hero-ctas .link-arrow:hover{ color:var(--brass-light); }
+
+  .credentials{
+    display:flex; flex-wrap:wrap;
+    margin-top:56px;
+  }
+  .credentials .cred{ flex:0 0 50%; margin-bottom:24px; padding-right:16px; }
+  @media (min-width:880px){ .credentials .cred{ flex:0 0 25%; } }
+  .cred{ display:flex; align-items:flex-start; gap:10px; }
+  .cred svg{ width:16px; height:16px; margin-top:3px; margin-right:10px; color:var(--brass-light); flex-shrink:0; }
+  .cred .t{ font-size:12.5px; font-weight:600; letter-spacing:.03em; color:var(--paper); }
+  .cred .s{ font-size:11px; color:rgba(247,244,236,.5); font-family:var(--font-mono); }
+
+  /* ---- certificate visual ---- */
+  .cert{
+    position:relative;
+    background:var(--paper);
+    border-radius:2px;
+    box-shadow:0 40px 80px -30px rgba(0,0,0,.55), 0 0 0 1px rgba(216,190,142,.25);
+    color:var(--graphite);
+    padding:26px 26px 30px;
+  }
+  .cert-head{
+    display:flex; justify-content:space-between; align-items:baseline;
+    border-bottom:1px solid var(--paper-line);
+    padding-bottom:14px; margin-bottom:20px;
+  }
+  .cert-head .title{ font-family:var(--font-mono); font-size:11px; letter-spacing:.1em; color:var(--graphite-soft); text-transform:uppercase; }
+  .cert-head .fig{ font-family:var(--font-mono); font-size:11px; color:var(--seal-blue); }
+
+  .cert-body{ display:flex; flex-direction:column; gap:22px; }
+  @media (min-width:560px){
+    .cert-body{ flex-direction:row; }
+    .cert-body > div{ flex:1; min-width:0; }
+  }
+  .panel-label{
+    font-family:var(--font-mono); font-size:10px; letter-spacing:.1em;
+    color:var(--graphite-soft); margin-bottom:10px; text-transform:uppercase;
+  }
+  .bars{ display:flex; align-items:flex-end; gap:10px; height:110px; padding:0 6px; }
+  .bars.original .bar{ background:#C9C4B4; }
+  .bars.certified .bar:nth-child(1){ background:var(--seal-blue); }
+  .bars.certified .bar:nth-child(2){ background:#3C8FBF; }
+  .bars.certified .bar:nth-child(3){ background:var(--verified-green); }
+  .bar{ flex:1; border-radius:2px 2px 0 0; }
+
+  .cert-footer{
+    display:flex; justify-content:space-between; align-items:center;
+    margin-top:22px; padding-top:16px; border-top:1px dashed var(--paper-line);
+    font-family:var(--font-mono); font-size:10.5px; color:var(--graphite-soft);
+  }
+
+  .stamp{
+    position:absolute; right:-14px; bottom:-26px;
+    width:132px; height:132px;
+    transform:rotate(-11deg) scale(0.86);
+    opacity:0;
+  }
+  .stamp.stamped{
+    animation:stampDown .7s var(--ease-stamp) forwards;
+  }
+  @keyframes stampDown{
+    0%{ opacity:0; transform:rotate(-11deg) scale(1.9); }
+    60%{ opacity:1; }
+    100%{ opacity:1; transform:rotate(-11deg) scale(1); }
+  }
+  .stamp svg{ width:100%; height:100%; filter:drop-shadow(0 8px 16px rgba(140,59,46,.25)); }
+
+  /* ================= SECTION 2 ================= */
+  section{ padding:110px 0; }
+  @media (max-width:640px){ section{ padding:72px 0; } }
+  .sec-head{ text-align:center; max-width:640px; margin:0 auto 64px; }
+  .sec-head h2{ font-size:clamp(30px,4.4vw,44px); margin-top:16px; line-height:1.12; }
+  .sec-head p{ margin-top:18px; color:var(--graphite-soft); font-size:16px; }
+
+  .flow{
+    display:flex; flex-direction:column; gap:36px; align-items:center;
+  }
+  @media (min-width:880px){
+    .flow{ flex-direction:row; align-items:center; }
+    .flow > .flow-card{ flex:1; min-width:0; }
+    .flow > .engine{ flex:0 0 auto; }
+  }
+
+  .flow-card{
+    background:var(--white);
+    border:1px solid var(--paper-line);
+    border-radius:var(--radius-md);
+    padding:26px;
+    box-shadow:0 1px 2px rgba(20,20,10,.04);
+  }
+  .flow-card .cap{ display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+  .flow-card .cap svg{ width:20px; height:20px; color:var(--seal-blue); }
+  .flow-card .cap .h{ font-weight:600; font-size:14px; }
+  .flow-card .cap .s{ font-size:11.5px; color:var(--graphite-soft); font-family:var(--font-mono); }
+
+  .mini-chart{ display:flex; align-items:flex-end; gap:10px; height:130px; padding:10px 4px 0; }
+  .mini-chart .b{ flex:1; background:#C9C4B4; border-radius:2px 2px 0 0; }
+  .mini-chart.right .b:nth-child(1){ background:var(--seal-blue); }
+  .mini-chart.right .b:nth-child(2){ background:#3C8FBF; }
+  .mini-chart.right .b:nth-child(3){ background:var(--verified-green); }
+
+  .engine{
+    display:flex; flex-direction:column; align-items:center; gap:14px;
+  }
+  .engine-badge{
+    width:96px; height:96px; border-radius:50%;
+    background:var(--ink);
+    display:flex; align-items:center; justify-content:center;
+    position:relative;
+    box-shadow:0 0 0 1px rgba(216,190,142,.35), 0 20px 40px -18px rgba(11,30,51,.5);
+  }
+  .engine-badge svg{ width:38px; height:38px; color:var(--brass-light); }
+  .engine-badge .scan{
+    position:absolute; left:8%; right:8%; height:2px;
+    background:linear-gradient(90deg, transparent, var(--brass-light), transparent);
+    animation:scanline 2.6s ease-in-out infinite;
+  }
+  @keyframes scanline{
+    0%{ top:18%; opacity:0; } 10%{opacity:1;} 50%{ top:78%; opacity:1;} 60%{opacity:0;} 100%{ top:18%; opacity:0; }
+  }
+  .engine .label{ font-family:var(--font-mono); font-size:11px; letter-spacing:.08em; text-align:center; color:var(--graphite-soft); text-transform:uppercase; }
+
+  .verified-tag{
+    display:flex; align-items:center; gap:8px;
+    margin-top:14px;
+    font-family:var(--font-mono); font-size:12px; color:var(--verified-green); font-weight:600;
+  }
+  .score-plate{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-top:16px; padding-top:14px; border-top:1px solid var(--paper-line);
+  }
+  .score-plate .num{ font-family:var(--font-mono); font-size:26px; color:var(--verified-green); font-weight:600; }
+  .score-plate .lbl{ font-family:var(--font-mono); font-size:10px; color:var(--graphite-soft); text-align:right; letter-spacing:.06em; }
+
+  /* ================= PROTOCOL (six stages) ================= */
+  .protocol{ background:var(--ink); color:var(--paper); }
+  .protocol .sec-head p{ color:rgba(247,244,236,.6); }
+  .protocol .sec-head h2{ color:var(--paper); }
+
+  .ledger{
+    max-width:760px; margin:0 auto;
+    border-top:1px solid rgba(216,190,142,.28);
+  }
+  .article{
+    display:flex;
+    align-items:center;
+    gap:24px;
+    padding:26px 0;
+    border-bottom:1px solid rgba(216,190,142,.16);
+    transition:background .2s ease;
+  }
+  .article:hover{ background:rgba(216,190,142,.04); }
+  .article .roman{ flex:0 0 60px; }
+  .article .name-block{ flex:1; min-width:0; }
+  .article .status{ flex:0 0 auto; }
+  @media (min-width:640px){ .article .roman{ flex:0 0 100px; } }
+  @media (max-width:640px){
+    .article .status{ display:none; }
+  }
+  .article .roman{
+    font-family:var(--font-display); font-style:italic; font-size:28px; color:var(--brass-light);
+  }
+  .article .name{ font-family:var(--font-mono); font-size:19px; letter-spacing:.04em; font-weight:600; }
+  .article .desc{ font-size:13.5px; color:rgba(247,244,236,.55); margin-top:4px; }
+  .article .status{
+    font-family:var(--font-mono); font-size:10.5px; letter-spacing:.08em;
+    color:var(--verified-green); border:1px solid rgba(47,111,78,.5);
+    padding:5px 10px; border-radius:20px; white-space:nowrap;
+  }
+
+  /* ================= INSPECTION (precision) ================= */
+  .inspect-grid{ display:flex; flex-wrap:wrap; background:var(--paper-line); border:1px solid var(--paper-line); border-radius:var(--radius-md); overflow:hidden; }
+  .inspect-cell{ flex:1 1 50%; }
+  @media (min-width:880px){ .inspect-cell{ flex:1 1 25%; } }
+  .inspect-cell{ background:var(--white); padding:30px 24px; border-right:1px solid var(--paper-line); border-bottom:1px solid var(--paper-line); margin-right:-1px; margin-bottom:-1px; }
+  .inspect-cell .n{ font-family:var(--font-mono); font-size:11px; color:var(--brass); letter-spacing:.08em; }
+  .inspect-cell svg{ width:26px; height:26px; color:var(--seal-blue); margin:14px 0 12px; }
+  .inspect-cell .h{ font-weight:600; font-size:15.5px; }
+  .inspect-cell .s{ font-size:12.5px; color:var(--graphite-soft); margin-top:4px; }
+  .inspect-cell .metric{ margin-top:14px; font-family:var(--font-mono); font-size:12px; color:var(--seal-blue); border-top:1px dashed var(--paper-line); padding-top:10px; }
+
+  /* ================= COMPLY ================= */
+  .comply{
+    background:linear-gradient(180deg, var(--paper) 0%, var(--paper-dim) 100%);
+    border-top:1px solid var(--paper-line); border-bottom:1px solid var(--paper-line);
+  }
+  .comply-inner{ display:flex; flex-direction:column; gap:60px; align-items:center; text-align:center; }
+  .comply-inner .checklist{ justify-content:center; }
+  @media (min-width:960px){
+    .comply-inner{ flex-direction:row; text-align:left; align-items:center; }
+    .comply-inner > div:first-child{ flex:1; }
+    .comply-inner > div:last-child{ flex:0 0 auto; }
+    .comply-inner .checklist{ justify-content:flex-start; }
+  }
+  .comply h2{ font-size:clamp(38px,5vw,54px); }
+  .comply .lede{ margin-top:18px; max-width:440px; color:var(--graphite-soft); font-size:16px; }
+  @media (max-width:960px){ .comply .lede{ margin:18px auto 0; } }
+
+  .checklist{ margin-top:30px; display:flex; flex-wrap:wrap; }
+  .check-item{ display:flex; align-items:center; margin-right:30px; margin-bottom:10px; }
+  .check-item svg{ width:17px; height:17px; margin-right:9px; color:var(--verified-green); }
+  .check-item .t{ font-size:13px; font-weight:600; }
+  .check-item .s{ font-size:11.5px; color:var(--graphite-soft); font-family:var(--font-mono); }
+
+  .seal-ring{
+    position:relative; width:270px; height:270px; margin:0 auto;
+  }
+  .seal-ring svg.ring{ width:100%; height:100%; transform:rotate(-90deg); }
+  .seal-ring .track{ fill:none; stroke:var(--paper-line); stroke-width:3; }
+  .seal-ring .prog{
+    fill:none; stroke:var(--verified-green); stroke-width:3; stroke-linecap:round;
+    stroke-dasharray:754; stroke-dashoffset:754;
+    animation:ringFill 1.6s var(--ease-stamp) .3s forwards;
+  }
+  @keyframes ringFill{ to{ stroke-dashoffset:60; } }
+  .seal-center{
+    position:absolute; top:0; left:0; right:0; bottom:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .seal-center .num{ font-family:var(--font-mono); font-size:54px; font-weight:600; color:var(--ink); }
+  .seal-center .lbl{ font-family:var(--font-mono); font-size:11px; letter-spacing:.1em; color:var(--verified-green); font-weight:600; margin-top:2px; }
+  .seal-center svg{ width:20px; height:20px; color:var(--verified-green); margin-top:10px; }
+
+  .report{ margin-top:24px; text-align:left; font-family:var(--font-mono); font-size:11.5px; color:var(--graphite-soft); }
+  .report div{ display:flex; justify-content:space-between; gap:24px; padding:6px 0; border-bottom:1px dashed var(--paper-line); width:270px; margin:0 auto; }
+  .report span.v{ color:var(--verified-green); font-weight:600; }
+
+  /* ================= CLOSING ================= */
+  .closing{ background:var(--ink); color:var(--paper); text-align:center; padding:120px 0 70px; }
+  .closing h2{ color:var(--paper); font-size:clamp(32px,5vw,50px); line-height:1.15; }
+  .closing .btn{ margin-top:34px; }
+
+  footer{
+    border-top:1px solid rgba(216,190,142,.16);
+    margin-top:80px; padding-top:28px;
+    display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;
+    font-family:var(--font-mono); font-size:11px; color:rgba(247,244,236,.4);
+  }
+  footer a{ color:rgba(247,244,236,.55); text-decoration:none; margin-left:18px; }
+  footer a:hover{ color:var(--brass-light); }
+
+  /* reveal-on-scroll: visible by default (progressive enhancement).
+     JS adds .reveal-armed (which hides) before observing, then .in to reveal.
+     If JS fails or IntersectionObserver is unsupported, content simply stays visible. */
+  .reveal.reveal-armed{ opacity:0; transform:translateY(18px); }
+  .reveal{ transition:opacity .7s ease, transform .7s ease; }
+  .reveal.reveal-armed.in{ opacity:1; transform:translateY(0); }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap nav-inner">
+    <a href="#" class="brand">
+      <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="20" cy="20" r="18.5" stroke="#D8BE8E" stroke-width="1.4"/>
+        <circle cx="20" cy="20" r="13.5" stroke="#D8BE8E" stroke-width="1" stroke-dasharray="1.5 3.4"/>
+        <path d="M13 22.5L18 27L27.5 15" stroke="#F7F4EC" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="brand-text">
+        <span class="name">DECODE</span>
+        <span class="tag">DATA EXTRACTION PROTOCOL</span>
+      </span>
+    </a>
+    <nav class="links">
+      <a href="#overview">Overview</a>
+      <a href="#protocol">Pipeline</a>
+      <a href="#comply">Compliance</a>
+      <a href="#access">Access</a>
+    </nav>
+    <div class="nav-actions">
+      <a href="#" class="signin">Sign In</a>
+      <a href="#" class="btn btn-seal">Begin Verification</a>
+    </div>
+    <button class="nav-toggle" aria-label="Menu">☰</button>
+  </div>
+</header>
+
+<section class="hero" id="overview">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="protocol-no">PROTOCOL NO. DEC — 2026 &nbsp;·&nbsp; ACADEMIC DATA STANDARD</div>
+      <div class="eyebrow on-dark">AI-POWERED CHART INTELLIGENCE</div>
+      <h1>Extract.<br>Reconstruct.<br><span class="italic">Comply.</span></h1>
+      <p class="lede">DECODE converts locked charts inside research PDFs into certified, editable datasets — with every reconstruction assessed for copyright compliance before it's released for reuse.</p>
+
+      <div class="hero-ctas">
+        <a href="#" class="btn btn-seal">Begin Verification →</a>
+        <a href="#protocol" class="link-arrow">View the Protocol ↓</a>
+      </div>
+
+      <div class="credentials">
+        <div class="cred">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 2L20 6V12C20 17 16.5 20.7 12 22C7.5 20.7 4 17 4 12V6L12 2Z" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div><div class="t">Research-Grade</div><div class="s">ACCURATE &amp; RELIABLE</div></div>
+        </div>
+        <div class="cred">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.5L10.5 15L16 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <div><div class="t">AI-Verified</div><div class="s">SMART EXTRACTION</div></div>
+        </div>
+        <div class="cred">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M8 9H16M8 13H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <div><div class="t">Copyright-Assessed</div><div class="s">RESPONSIBLE REUSE</div></div>
+        </div>
+        <div class="cred">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M6 3H14L19 8V21H6V3Z" stroke="currentColor" stroke-width="1.6"/><path d="M14 3V8H19" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div><div class="t">Publication-Ready</div><div class="s">EDITABLE FORMATS</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cert reveal">
+      <div class="cert-head">
+        <span class="title">Certificate of Extraction · Fig. 2.1</span>
+        <span class="fig">Page 12 / 144</span>
+      </div>
+      <div class="cert-body">
+        <div>
+          <div class="panel-label">As Submitted</div>
+          <div class="bars original">
+            <div class="bar" style="height:58%"></div>
+            <div class="bar" style="height:38%"></div>
+            <div class="bar" style="height:82%"></div>
+          </div>
+        </div>
+        <div>
+          <div class="panel-label">As Certified</div>
+          <div class="bars certified">
+            <div class="bar" style="height:58%"></div>
+            <div class="bar" style="height:38%"></div>
+            <div class="bar" style="height:82%"></div>
+          </div>
+        </div>
+      </div>
+      <div class="cert-footer">
+        <span>AXES RECOGNIZED · LABELS EXTRACTED · STRUCTURE VERIFIED</span>
+        <span>92 / 100</span>
+      </div>
+
+      <div class="stamp" id="heroStamp">
+        <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="60" cy="60" r="56" fill="none" stroke="#8C3B2E" stroke-width="2"/>
+          <circle cx="60" cy="60" r="47" fill="none" stroke="#8C3B2E" stroke-width="1"/>
+          <path id="stampCircle" d="M60,13 a47,47 0 1,1 -0.1,0" fill="none"/>
+          <text font-family="IBM Plex Mono" font-size="7.6" letter-spacing="2" fill="#8C3B2E">
+            <textPath href="#stampCircle" startOffset="2">VERIFIED EXTRACTION · DECODE PROTOCOL ·</textPath>
+          </text>
+          <text x="60" y="57" text-anchor="middle" font-family="Newsreader" font-style="italic" font-size="22" fill="#8C3B2E">92</text>
+          <text x="60" y="72" text-anchor="middle" font-family="IBM Plex Mono" font-size="7" letter-spacing="1.5" fill="#8C3B2E">SAFE TO USE</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how-it-works">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="eyebrow" style="justify-content:center;">HOW VERIFICATION WORKS</div>
+      <h2>From Locked Figure to<br>Certified Record.</h2>
+      <p>Every chart is read, understood, and re-issued as structured data — nothing is guessed, everything is checked.</p>
+    </div>
+
+    <div class="flow reveal">
+      <div class="flow-card">
+        <div class="cap">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M6 3H14L19 8V21H6V3Z" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div><div class="h">Research Figure</div><div class="s">SCANNED FROM SOURCE PDF</div></div>
+        </div>
+        <div class="mini-chart">
+          <div class="b" style="height:60%"></div>
+          <div class="b" style="height:40%"></div>
+          <div class="b" style="height:85%"></div>
+        </div>
+      </div>
+
+      <div class="engine">
+        <div class="engine-badge">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/><path d="M8 12.5L10.5 15L16 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <div class="scan"></div>
+        </div>
+        <div class="label">Verification<br>Engine</div>
+      </div>
+
+      <div class="flow-card">
+        <div class="cap">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 19V5M4 19H20M8 15V19M12 11V19M16 8V19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <div><div class="h">Certified Record</div><div class="s">STRUCTURED &amp; EDITABLE</div></div>
+        </div>
+        <div class="mini-chart right">
+          <div class="b" style="height:60%"></div>
+          <div class="b" style="height:40%"></div>
+          <div class="b" style="height:85%"></div>
+        </div>
+        <div class="score-plate">
+          <div class="verified-tag">
+            <svg viewBox="0 0 24 24" fill="none" width="14" height="14"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M8 12.5L10.5 15L16 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            HIGH CONFIDENCE
+          </div>
+          <div style="text-align:right;">
+            <div class="num">92</div>
+            <div class="lbl">CONF.<br>SCORE</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="protocol" id="protocol">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="eyebrow on-dark" style="justify-content:center;">THE PROTOCOL</div>
+      <h2>Six Articles.<br>One Chain of Custody.</h2>
+      <p>Every document passes through the same recorded sequence — nothing is skipped, nothing is unaccounted for.</p>
+    </div>
+
+    <div class="ledger reveal">
+      <div class="article">
+        <div class="roman">I.</div>
+        <div class="name-block"><div class="name">INGEST</div><div class="desc">Document received, paginated, and rendered for analysis.</div></div>
+        <div class="status">RECORDED</div>
+      </div>
+      <div class="article">
+        <div class="roman">II.</div>
+        <div class="name-block"><div class="name">DETECT</div><div class="desc">Every chart, table, and diagram located as its own region.</div></div>
+        <div class="status">RECORDED</div>
+      </div>
+      <div class="article">
+        <div class="roman">III.</div>
+        <div class="name-block"><div class="name">EXTRACT</div><div class="desc">Values, axes, legends, and labels recovered with confidence scoring.</div></div>
+        <div class="status">RECORDED</div>
+      </div>
+      <div class="article">
+        <div class="roman">IV.</div>
+        <div class="name-block"><div class="name">RECONSTRUCT</div><div class="desc">Rebuilt as an editable, restylable, interactive chart.</div></div>
+        <div class="status">RECORDED</div>
+      </div>
+      <div class="article">
+        <div class="roman">V.</div>
+        <div class="name-block"><div class="name">COMPLY</div><div class="desc">Similarity, color, and layout risk assessed against the source.</div></div>
+        <div class="status">RECORDED</div>
+      </div>
+      <div class="article">
+        <div class="roman">VI.</div>
+        <div class="name-block"><div class="name">EXPORT</div><div class="desc">Certified record released as SVG, PNG, or structured data.</div></div>
+        <div class="status">RECORDED</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="precision">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="eyebrow" style="justify-content:center;">INSPECTION STANDARD</div>
+      <h2>Precision at<br>Every Stage.</h2>
+      <p>Intelligent detection. Accurate extraction. Trusted results — verified at each checkpoint, not assumed at the end.</p>
+    </div>
+
+    <div class="inspect-grid reveal">
+      <div class="inspect-cell">
+        <div class="n">01</div>
+        <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/><path d="M2 12H6M18 12H22M12 2V6M12 18V22" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <div class="h">Detect</div>
+        <div class="s">Smart Vision</div>
+        <div class="metric">REGIONS FOUND: 6 / 6</div>
+      </div>
+      <div class="inspect-cell">
+        <div class="n">02</div>
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 7V5C4 3.9 4.9 3 6 3H18C19.1 3 20 3.9 20 5V7M9 21H15M12 3V21" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <div class="h">Extract</div>
+        <div class="s">Intelligent OCR</div>
+        <div class="metric">FIELD VARIANCE: 1.2%</div>
+      </div>
+      <div class="inspect-cell">
+        <div class="n">03</div>
+        <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div class="h">Structure</div>
+        <div class="s">Organized Data</div>
+        <div class="metric">SCHEMA MATCH: 98%</div>
+      </div>
+      <div class="inspect-cell">
+        <div class="n">04</div>
+        <svg viewBox="0 0 24 24" fill="none"><path d="M12 2L20 6V12C20 17 16.5 20.7 12 22C7.5 20.7 4 17 4 12V6L12 2Z" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div class="h">Verify</div>
+        <div class="s">Trusted Accuracy</div>
+        <div class="metric">FINAL RISK: LOW</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="comply" id="comply">
+  <div class="wrap comply-inner">
+    <div class="reveal">
+      <div class="eyebrow">RESPONSIBLE · VERIFIED · TRUSTED</div>
+      <h2>Comply.</h2>
+      <p class="lede">Every reconstruction is evaluated for responsible academic reuse before it ever leaves the protocol.</p>
+
+      <div class="checklist">
+        <div class="check-item">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/></svg>
+          <div><div class="t">Similarity</div><div class="s">CHECKED</div></div>
+        </div>
+        <div class="check-item">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/></svg>
+          <div><div class="t">Integrity</div><div class="s">VERIFIED</div></div>
+        </div>
+        <div class="check-item">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 2L20 6V12C20 17 16.5 20.7 12 22C7.5 20.7 4 17 4 12V6L12 2Z" stroke="currentColor" stroke-width="1.7"/></svg>
+          <div><div class="t">Risk</div><div class="s">MINIMIZED</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="reveal">
+      <div class="seal-ring">
+        <svg class="ring" viewBox="0 0 260 260">
+          <circle class="track" cx="130" cy="130" r="120"></circle>
+          <circle class="prog" cx="130" cy="130" r="120"></circle>
+        </svg>
+        <div class="seal-center">
+          <div class="num">92</div>
+          <div class="lbl">SAFE TO USE</div>
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 2L20 6V12C20 17 16.5 20.7 12 22C7.5 20.7 4 17 4 12V6L12 2Z" stroke="currentColor" stroke-width="1.7"/></svg>
+        </div>
+      </div>
+      <div class="report">
+        <div>STRUCTURAL SIMILARITY <span class="v">98%</span></div>
+        <div>CHROMATIC OVERLAP <span class="v">95%</span></div>
+        <div>LAYOUT RISK <span class="v">LOW</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="closing" id="access">
+  <div class="wrap">
+    <div class="eyebrow on-dark" style="justify-content:center;">READY WHEN YOU ARE</div>
+    <h2 class="reveal">Turn Research Figures Into<br>Certified Intelligence.</h2>
+    <a href="#" class="btn btn-seal reveal">Begin Verification →</a>
+
+    <footer class="wrap" style="padding:0;">
+      <span>© 2026 DECODE · Scientific Data Extraction Protocol</span>
+      <span>
+        <a href="#overview">Overview</a>
+        <a href="#protocol">Pipeline</a>
+        <a href="#comply">Compliance</a>
+      </span>
+    </footer>
+    <div style="margin-top:14px; font-family:'IBM Plex Mono'; font-size:10.5px; color:rgba(247,244,236,.32);">Built by Mayank &amp; Vaibhav</div>
+  </div>
+</section>
+
+<script>
+  // scroll reveal (progressive enhancement — content is visible by default;
+  // only arm the hide/reveal animation if IntersectionObserver actually exists)
+  if ('IntersectionObserver' in window) {
+    const revealEls = document.querySelectorAll('.reveal');
+    const io = new IntersectionObserver((entries)=>{
+      entries.forEach(e=>{
+        if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.15 });
+    revealEls.forEach(el=>{
+      el.classList.add('reveal-armed');
+      io.observe(el);
+    });
+  }
+
+  // hero stamp trigger once visible
+  const stamp = document.getElementById('heroStamp');
+  setTimeout(()=>{ stamp.classList.add('stamped'); }, 500);
+
+  // mobile nav (simple toggle of links visibility)
+  const toggle = document.querySelector('.nav-toggle');
+  const links = document.querySelector('nav.links');
+  toggle?.addEventListener('click', ()=>{
+    links.style.display = links.style.display === 'flex' ? 'none' : 'flex';
+    links.style.position='absolute'; links.style.top='64px'; links.style.left='0';
+    links.style.right='0'; links.style.background='#0B1E33'; links.style.flexDirection='column';
+    links.style.padding='20px 24px'; links.style.gap='16px';
+  });
+</script>
+
+</body>
+</html>

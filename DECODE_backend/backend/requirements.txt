@@ -1,6 +1,8 @@
+
 flask==3.0.3
 flask-cors==4.0.1
 opencv-python-headless==4.10.0.84
+pytesseract==0.3.10
 Pillow==10.4.0
 pdf2image==1.17.0
 pdfplumber==0.11.4
@@ -12,6 +14,7 @@ scikit-learn==1.5.2
 numpy==1.26.4
 pandas==2.2.3
 firebase-admin==6.5.0
+python-magic==0.4.27
 langdetect==1.0.9
 textstat==0.7.3
 werkzeug==3.0.6
@@ -23,8 +26,6 @@ sentence-transformers==3.2.1
 transformers==4.46.3
 torch==2.4.1
 python-multipart==0.0.12
-easyocr==1.7.2
-PyMuPDF==1.25.1
-plotly==5.24.1
-kaleido==0.2.1
-google-generativeai==0.8.3
+P y M u P D F  
+python-dotenv==1.0.1
+google-generativeai==0.8.3img2table
