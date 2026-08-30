@@ -28,7 +28,8 @@ import {
   FolderDown,
   TrendingUp,
   Image as ImageIcon,
-  Radar
+  Radar,
+  RefreshCw
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -55,6 +56,7 @@ import {
 import { uploadDocument, getDocumentStatus, getDocumentCharts } from "@/lib/api";
 import { normalizeCharts, type NormalizedChart } from "@/lib/canonicalNormalizer";
 import LiveReconstructedPreview from "./LiveReconstructedPreview";
+import { useLocalExtraction } from "@/hooks/useLocalExtraction";
 import {
   useArtifactStore,
   type ArtifactExtraction,
@@ -73,6 +75,54 @@ const PALETTE = [
   "#6366f1", // Indigo
   "#14b8a6", // Teal
 ];
+
+const DIAGRAM_TYPES = new Set(["diagram", "flow", "flowchart", "process", "pipeline", "network", "org_chart", "architecture"]);
+
+/**
+ * Returns the set of render modes that should be DISABLED for the
+ * current artifact based on its chart_type and data shape.
+ */
+function getDisabledModes(artifact: ArtifactExtraction | null): Set<RenderMode> {
+  const disabled = new Set<RenderMode>();
+  if (!artifact) return disabled;
+
+  const type = (artifact.chart_type || "").toLowerCase();
+  const catCount = artifact.categories?.length || 0;
+  const seriesCount = artifact.series?.length || 0;
+  const isDiagram = DIAGRAM_TYPES.has(type);
+  const hasNoData = catCount === 0 || seriesCount === 0;
+
+  if (isDiagram || hasNoData) {
+    // Diagram artifacts or artifacts with no data: disable all chart modes
+    disabled.add("bar");
+    disabled.add("stacked_bar");
+    disabled.add("line");
+    disabled.add("area");
+    disabled.add("pie");
+    disabled.add("donut");
+    disabled.add("radar");
+    // Keep "table" and "original" enabled
+    return disabled;
+  }
+
+  // Pie/Donut don't make sense with many categories (>12) or only 1 category
+  if (catCount > 12 || catCount < 2) {
+    disabled.add("pie");
+    disabled.add("donut");
+  }
+
+  // Radar needs at least 3 categories
+  if (catCount < 3) {
+    disabled.add("radar");
+  }
+
+  // Stacked bar only makes sense with 2+ series
+  if (seriesCount < 2) {
+    disabled.add("stacked_bar");
+  }
+
+  return disabled;
+}
 
 function toArtifactExtraction(chart: NormalizedChart, idx: number): ArtifactExtraction {
   return {
@@ -139,6 +189,8 @@ export function DemoWorkspace() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+
+  const { extract, status: extractionStatus, error: extractionError } = useLocalExtraction();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -234,10 +286,77 @@ export function DemoWorkspace() {
       // Fetch extracted charts and populate store
       if (newDocId) {
         const extractedCharts = await getDocumentCharts(newDocId);
-        const normalized = normalizeCharts(extractedCharts);
-        if (normalized.length > 0) {
-          const list = normalized.map((n, i) => toArtifactExtraction(n, i));
-          loadArtifacts(list);
+        const results: ArtifactExtraction[] = [];
+
+        for (let i = 0; i < extractedCharts.length; i++) {
+          const chart = extractedCharts[i];
+          const b64 = chart.original_image_base64;
+
+          // First: build a baseline artifact from the Flask backend's
+          // already-normalized data (categories, series at top level).
+          // This is always available and correct.
+          const baselineArtifact = toArtifactExtraction(chart, i);
+          
+          if (!b64) {
+            // No image — use baseline data from Flask backend
+            if (baselineArtifact.categories.length > 0 && baselineArtifact.series.length > 0) {
+              results.push(baselineArtifact);
+            } else {
+              results.push({
+                ...baselineArtifact,
+                error: "No image found for this crop."
+              } as any);
+            }
+            continue;
+          }
+          
+          // Try local extraction for potentially better data
+          try {
+            const byteString = atob(b64);
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let j = 0; j < byteString.length; j++) {
+              ia[j] = byteString.charCodeAt(j);
+            }
+            const blob = new Blob([ab], { type: "image/png" });
+
+            const extractedData = await extract(blob);
+            
+            // Use extraction result, but only if it actually has data.
+            // Otherwise fall back to the Flask baseline.
+            const hasExtractedData = 
+              extractedData.categories && extractedData.categories.length > 0 &&
+              extractedData.series && extractedData.series.length > 0;
+
+            if (hasExtractedData) {
+              results.push({
+                ...extractedData,
+                id: chart.id || `artifact-${i}`,
+                original_image_base64: b64,
+                original_image_path: chart.original_image_path,
+                title: extractedData.title || chart.title || `Visual Artifact ${i + 1}`,
+                page_number: chart.page_number || 1,
+                compliance: baselineArtifact.compliance,
+              } as ArtifactExtraction);
+            } else {
+              // Local extraction returned empty data — use Flask baseline
+              results.push({
+                ...baselineArtifact,
+                original_image_base64: b64,
+              });
+            }
+          } catch (e: any) {
+            // Local extraction failed — use Flask backend data as fallback
+            console.warn(`Local extraction failed for artifact ${i}, using Flask data:`, e.message);
+            results.push({
+              ...baselineArtifact,
+              original_image_base64: b64,
+            });
+          }
+        }
+        
+        if (results.length > 0) {
+          loadArtifacts(results);
         }
       }
       setPipelineStage("done");
@@ -345,154 +464,71 @@ export function DemoWorkspace() {
     URL.revokeObjectURL(url);
   };
 
-  // ── Helper: Recursively Inline Computed Styles from Live SVG to Clone ────
-  const inlineComputedStyles = (sourceEl: Element, targetEl: Element) => {
-    if (!sourceEl || !targetEl || !(sourceEl instanceof Element) || !(targetEl instanceof Element)) return;
-    const sourceStyle = window.getComputedStyle(sourceEl);
-    const relevantProps = [
-      "fill", "stroke", "stroke-width", "stroke-dasharray", "stroke-linecap", "stroke-linejoin",
-      "font-family", "font-size", "font-weight", "font-style", "letter-spacing",
-      "text-anchor", "dominant-baseline", "alignment-baseline",
-      "opacity", "color", "transform", "visibility", "display", "shape-rendering", "text-rendering"
-    ];
-    relevantProps.forEach((prop) => {
-      const value = sourceStyle.getPropertyValue(prop);
-      if (value && value !== "none" && value !== "") {
-        (targetEl as HTMLElement | SVGElement).style.setProperty(prop, value);
-      }
-    });
-
-    const sourceChildren = sourceEl.children;
-    const targetChildren = targetEl.children;
-    for (let i = 0; i < Math.min(sourceChildren.length, targetChildren.length); i++) {
-      inlineComputedStyles(sourceChildren[i], targetChildren[i]);
-    }
+  // ── Helper: check if chart type is a diagram ────────────────────────────
+  const isDiagramType = (chartType?: string): boolean => {
+    const t = (chartType || "").toLowerCase();
+    return DIAGRAM_TYPES.has(t);
   };
 
-  // ── Helper: Capture Live SVG from DOM with Inlined Styles & Background ───
-  const buildStyledSVGString = (container: HTMLElement, chart: ArtifactExtraction, mode: RenderMode): { svgString: string; width: number; height: number } => {
-    const svgEl = container.querySelector("svg");
-    if (svgEl && mode !== "table") {
-      const clone = svgEl.cloneNode(true) as SVGSVGElement;
-      inlineComputedStyles(svgEl, clone);
-
-      const bbox = svgEl.getBoundingClientRect();
-      const width = Math.max(300, Math.round(bbox.width || 900));
-      const height = Math.max(200, Math.round(bbox.height || 420));
-
-      clone.setAttribute("width", String(width));
-      clone.setAttribute("height", String(height));
-      if (!clone.getAttribute("viewBox")) {
-        clone.setAttribute("viewBox", `0 0 ${width} ${height}`);
-      }
-      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-      clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
-
-      const containerStyle = window.getComputedStyle(container);
-      const bgColor = containerStyle.backgroundColor && containerStyle.backgroundColor !== "rgba(0, 0, 0, 0)" && containerStyle.backgroundColor !== "transparent"
-        ? containerStyle.backgroundColor
-        : "#0f172a";
-
-      const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      bgRect.setAttribute("width", "100%");
-      bgRect.setAttribute("height", "100%");
-      bgRect.setAttribute("fill", bgColor);
-      clone.insertBefore(bgRect, clone.firstChild);
-
-      const serializer = new XMLSerializer();
-      const svgString = '<?xml version="1.0" encoding="UTF-8"?>\n' + serializer.serializeToString(clone);
-      return { svgString, width, height };
-    }
-
-    // Vector SVG Table fallback when in table mode
-    const width = 900;
-    const colCount = (chart.series?.length || 0) + 1;
-    const colWidth = Math.floor((width - 80) / Math.max(1, colCount));
-    const rowHeight = 38;
-    const height = Math.max(480, 110 + (chart.categories?.length || 0) * rowHeight);
-
-    let tableSvg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
-  <rect width="100%" height="100%" fill="#0f172a"/>
-  <text x="40" y="45" fill="#f8fafc" font-size="20" font-weight="bold" font-family="system-ui, -apple-system, sans-serif">${chart.title || "Extracted Table"}</text>
-  <text x="40" y="70" fill="#94a3b8" font-size="12" font-family="system-ui, -apple-system, sans-serif">Page ${chart.page_number || 1} • DECODE Reconstructed Vector Table</text>
-  
-  <!-- Header Row -->
-  <rect x="40" y="90" width="${width - 80}" height="40" rx="8" fill="#1e293b"/>
-  <text x="55" y="115" fill="#e2e8f0" font-size="13" font-weight="bold" font-family="system-ui, -apple-system, sans-serif">${chart.chart_type === "table" ? "Epoch / Metric" : "Category"}</text>`;
-
-    (chart.series || []).forEach((s, sIdx) => {
-      tableSvg += `\n  <text x="${40 + (sIdx + 1) * colWidth + colWidth - 20}" y="115" fill="#818cf8" font-size="13" font-weight="bold" text-anchor="end" font-family="system-ui, -apple-system, sans-serif">${s.name}</text>`;
-    });
-
-    (chart.categories || []).forEach((cat, rIdx) => {
-      const y = 140 + rIdx * rowHeight;
-      const bgFill = rIdx % 2 === 0 ? "#0f172a" : "#1e293b33";
-      tableSvg += `\n  <rect x="40" y="${y}" width="${width - 80}" height="${rowHeight}" fill="${bgFill}"/>
-  <text x="55" y="${y + 24}" fill="#cbd5e1" font-size="12" font-family="system-ui, -apple-system, sans-serif">${cat}</text>`;
-
-      (chart.series || []).forEach((s, sIdx) => {
-        const rawV = s.values?.[rIdx];
-        const val = rawV !== undefined && rawV !== null && !isNaN(Number(rawV)) ? Number(rawV).toFixed(2) : "0.00";
-        tableSvg += `\n  <text x="${40 + (sIdx + 1) * colWidth + colWidth - 20}" y="${y + 24}" fill="#f1f5f9" font-size="12" font-family="monospace" text-anchor="end">${val}</text>`;
-      });
-    });
-
-    tableSvg += `\n</svg>`;
-    return { svgString: tableSvg, width, height };
-  };
-
-  // ── Export Handlers: Reconstructed SVG (Direct Live DOM Capture) ────────
-  const handleExportReconstructedSVG = () => {
+  // ── Export: SVG — captures whatever is visible in the preview ────────────
+  const handleExportReconstructedSVG = async () => {
     if (!currentArtifact || !chartContainerRef.current) return;
-    const { svgString } = buildStyledSVGString(chartContainerRef.current, currentArtifact, renderMode);
-    const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
-    const safeTitle = (currentArtifact.title || "chart").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const filename = `${safeTitle}_${renderMode}_reconstructed.svg`;
-    downloadBlob(blob, filename);
-    setExportNotice(`Reconstructed ${renderMode.replace("_", " ")} SVG downloaded!`);
-    setTimeout(() => setExportNotice(null), 2500);
+    try {
+      const safeTitle = (currentArtifact.title || "chart").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const filename = `${safeTitle}_${renderMode}_reconstructed.svg`;
+
+      const { toSvg } = await import("html-to-image");
+      
+      // Capture the entire Live Reconstructed Preview container DOM
+      const dataUrl = await toSvg(chartContainerRef.current, {
+        cacheBust: true,
+        backgroundColor: "#0f172a",
+        style: {
+          transform: "none",
+        },
+      });
+
+      // dataUrl is a data:image/svg+xml string — extract the SVG content
+      const svgContent = decodeURIComponent(dataUrl.split(",")[1] || "");
+      const blob = new Blob([svgContent], { type: "image/svg+xml;charset=utf-8" });
+      
+      downloadBlob(blob, filename);
+      setExportNotice(`${renderMode.replace("_", " ")} preview exported as SVG!`);
+      setTimeout(() => setExportNotice(null), 2500);
+    } catch (err: any) {
+      console.error("SVG export failed:", err);
+      setErrorMsg("Failed to export SVG: " + (err.message || String(err)));
+    }
   };
 
-  // ── Export Handlers: Reconstructed PNG (3x High-DPI Rasterized from SVG) ──
+  // ── Export: PNG — captures whatever is visible in the preview ────────────
   const handleExportReconstructedPNG = async () => {
     if (!currentArtifact || !chartContainerRef.current) return;
     try {
-      const { svgString, width, height } = buildStyledSVGString(chartContainerRef.current, currentArtifact, renderMode);
-      const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
-      const url = URL.createObjectURL(svgBlob);
+      const safeTitle = (currentArtifact.title || "chart").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const filename = `${safeTitle}_${renderMode}_reconstructed.png`;
 
-      const img = new Image();
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = (err) => reject(err);
-        img.src = url;
+      const { toPng } = await import("html-to-image");
+      
+      // Capture the entire container natively at 3x scale for crispness
+      const dataUrl = await toPng(chartContainerRef.current, {
+        cacheBust: true,
+        backgroundColor: "#0f172a",
+        pixelRatio: 3,
+        style: {
+          transform: "none",
+        },
       });
 
-      const scale = 3; // 3x ultra-sharp resolution for high-DPI screens
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(width * scale);
-      canvas.height = Math.round(height * scale);
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        ctx.scale(scale, scale);
-        ctx.drawImage(img, 0, 0, width, height);
-      }
-      URL.revokeObjectURL(url);
+      // Convert data URL to Blob
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
 
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const safeTitle = (currentArtifact.title || "chart").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-          const filename = `${safeTitle}_${renderMode}_reconstructed.png`;
-          downloadBlob(blob, filename);
-          setExportNotice(`Reconstructed ${renderMode.replace("_", " ")} PNG downloaded (3x crisp)!`);
-          setTimeout(() => setExportNotice(null), 2500);
-        }
-      }, "image/png");
+      downloadBlob(blob, filename);
+      setExportNotice(`${renderMode.replace("_", " ")} preview exported as PNG (3x crisp)!`);
+      setTimeout(() => setExportNotice(null), 2500);
     } catch (err: any) {
-      console.error("Failed to export PNG:", err);
+      console.error("PNG export failed:", err);
       setErrorMsg("Failed to export PNG: " + (err.message || String(err)));
     }
   };
@@ -571,6 +607,70 @@ export function DemoWorkspace() {
     setTimeout(() => setExportNotice(null), 2500);
   };
 
+  // ── Retry Extraction Without Gemini ───────────────────────────────────────
+  const handleRetryExtractionWithoutGemini = async () => {
+    if (!currentArtifact || !currentArtifact.original_image_base64) return;
+    try {
+      setExportNotice("Retrying extraction without Gemini...");
+      const byteString = atob(currentArtifact.original_image_base64);
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let j = 0; j < byteString.length; j++) {
+        ia[j] = byteString.charCodeAt(j);
+      }
+      const blob = new Blob([ab], { type: "image/png" });
+
+      const extractedData = await extract(blob, false);
+      
+      const newArtifact = {
+        ...currentArtifact,
+        ...extractedData,
+        original_image_base64: currentArtifact.original_image_base64,
+        title: extractedData.title || currentArtifact.title,
+      };
+
+      loadArtifacts(
+        artifactList.map(a => a.id === currentArtifact.id ? newArtifact : a)
+      );
+
+      setExportNotice("Extraction complete (Rule-based)!");
+      setTimeout(() => setExportNotice(null), 2500);
+    } catch (e: any) {
+      console.error(e);
+      setErrorMsg("Retry failed: " + e.message);
+    }
+  };
+
+  // ── Demo Presentation State Persistence ──────────────────────────────────
+  const handleSaveDemoState = async (demoId: string) => {
+    try {
+      setExportNotice(`Saving perfect demo state ${demoId} to backend...`);
+      await fetch(`http://localhost:8000/save_demo/${demoId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(artifacts)
+      });
+      setExportNotice(`Perfect demo state ${demoId} saved successfully!`);
+      setTimeout(() => setExportNotice(null), 3000);
+    } catch (e: any) {
+      setErrorMsg(`Failed to save demo state ${demoId}: ` + e.message);
+    }
+  };
+
+  const handleLoadDemoState = async (demoId: string) => {
+    try {
+      setExportNotice(`Loading perfect demo state ${demoId} (Ultra-Fast Static Load)...`);
+      const res = await fetch(`/perfect_demo_state_${demoId}.json`);
+      if (!res.ok) throw new Error(`No demo state ${demoId} found. Save it first!`);
+      const data = await res.json();
+      loadArtifacts(Object.values(data));
+      setExportNotice(`Perfect demo ${demoId} loaded instantly!`);
+      setTimeout(() => setExportNotice(null), 3000);
+    } catch (e: any) {
+      setErrorMsg(`Failed to load demo state ${demoId}: ` + e.message);
+    }
+  };
+
   // ── Copy JSON Payload ───────────────────────────────────────────────────
   const handleCopyJSON = () => {
     if (!currentArtifact) return;
@@ -598,6 +698,38 @@ export function DemoWorkspace() {
         </div>
 
         <div className="flex items-center flex-wrap gap-2.5">
+          {/* Demo 1 Buttons */}
+          <button
+            onClick={() => handleSaveDemoState('1')}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-900 hover:bg-indigo-800 text-indigo-200 border border-indigo-500/30 text-xs font-semibold transition-all cursor-pointer shadow-sm"
+            title="Save the current perfect UI state to backend for Demo 1"
+          >
+            <FolderDown className="w-3.5 h-3.5 text-indigo-400" /> Save Demo 1
+          </button>
+          <button
+            onClick={() => handleLoadDemoState('1')}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-900 hover:bg-emerald-800 text-emerald-200 border border-emerald-500/30 text-xs font-semibold transition-all cursor-pointer shadow-sm"
+            title="Load the perfect saved demo state 1 instantly"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Demo 1
+          </button>
+
+          {/* Demo 2 Buttons */}
+          <button
+            onClick={() => handleSaveDemoState('2')}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-900 hover:bg-indigo-800 text-indigo-200 border border-indigo-500/30 text-xs font-semibold transition-all cursor-pointer shadow-sm"
+            title="Save the current perfect UI state to backend for Demo 2"
+          >
+            <FolderDown className="w-3.5 h-3.5 text-indigo-400" /> Save Demo 2
+          </button>
+          <button
+            onClick={() => handleLoadDemoState('2')}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-900 hover:bg-emerald-800 text-emerald-200 border border-emerald-500/30 text-xs font-semibold transition-all cursor-pointer shadow-sm"
+            title="Load the perfect saved demo state 2 instantly"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Demo 2
+          </button>
+
           <button
             onClick={resetToBenchmarks}
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-all cursor-pointer shadow-sm"
@@ -862,98 +994,45 @@ export function DemoWorkspace() {
               </div>
 
               {/* Chart Mode Switcher Toolbar (Pure Transformation of SAME data) */}
-              <div className="flex items-center flex-wrap gap-1.5 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
-                <button
-                  onClick={() => setRenderMode("table")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    renderMode === "table"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <TableIcon className="w-3.5 h-3.5" /> Table View
-                </button>
-                <button
-                  onClick={() => setRenderMode("bar")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    renderMode === "bar"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <BarChart3 className="w-3.5 h-3.5" /> Bar
-                </button>
-                <button
-                  onClick={() => setRenderMode("stacked_bar")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    renderMode === "stacked_bar"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <BarChart3 className="w-3.5 h-3.5 rotate-90" /> Stacked
-                </button>
-                <button
-                  onClick={() => setRenderMode("line")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    renderMode === "line"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <LineChartIcon className="w-3.5 h-3.5" /> Line
-                </button>
-                <button
-                  onClick={() => setRenderMode("area")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    renderMode === "area"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <TrendingUp className="w-3.5 h-3.5" /> Area
-                </button>
-                <button
-                  onClick={() => setRenderMode("pie")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    renderMode === "pie"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <PieChartIcon className="w-3.5 h-3.5" /> Pie
-                </button>
-                <button
-                  onClick={() => setRenderMode("donut")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    renderMode === "donut"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <PieChartIcon className="w-3.5 h-3.5" /> Donut
-                </button>
-                <button
-                  onClick={() => setRenderMode("radar")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    renderMode === "radar"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <Radar className="w-3.5 h-3.5" /> Radar
-                </button>
-                <button
-                  onClick={() => setRenderMode("original")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    renderMode === "original"
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <Eye className="w-3.5 h-3.5" /> Original
-                </button>
-              </div>
+              {(() => {
+                const disabledModes = getDisabledModes(currentArtifact);
+                const modes: { key: RenderMode; label: string; icon: React.ReactNode }[] = [
+                  { key: "table", label: "Table View", icon: <TableIcon className="w-3.5 h-3.5" /> },
+                  { key: "bar", label: "Bar", icon: <BarChart3 className="w-3.5 h-3.5" /> },
+                  { key: "stacked_bar", label: "Stacked", icon: <BarChart3 className="w-3.5 h-3.5 rotate-90" /> },
+                  { key: "line", label: "Line", icon: <LineChartIcon className="w-3.5 h-3.5" /> },
+                  { key: "area", label: "Area", icon: <TrendingUp className="w-3.5 h-3.5" /> },
+                  { key: "pie", label: "Pie", icon: <PieChartIcon className="w-3.5 h-3.5" /> },
+                  { key: "donut", label: "Donut", icon: <PieChartIcon className="w-3.5 h-3.5" /> },
+                  { key: "radar", label: "Radar", icon: <Radar className="w-3.5 h-3.5" /> },
+                  { key: "original", label: "Original", icon: <Eye className="w-3.5 h-3.5" /> },
+                ];
+                return (
+                  <div className="flex items-center flex-wrap gap-1.5 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+                    {modes.map((m) => {
+                      const isDisabled = disabledModes.has(m.key);
+                      const isActive = renderMode === m.key;
+                      return (
+                        <button
+                          key={m.key}
+                          onClick={() => !isDisabled && setRenderMode(m.key)}
+                          disabled={isDisabled}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                            isDisabled
+                              ? "text-slate-600 cursor-not-allowed opacity-40"
+                              : isActive
+                              ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20 cursor-pointer"
+                              : "text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                          }`}
+                          title={isDisabled ? `${m.label} is not compatible with this artifact's data shape` : m.label}
+                        >
+                          {m.icon} {m.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {/* Undo / Redo */}
               <div className="flex items-center gap-1">
@@ -1115,6 +1194,13 @@ export function DemoWorkspace() {
                     {/* Export Action Buttons */}
                     <div className="flex items-center gap-2">
                       <button
+                        onClick={handleRetryExtractionWithoutGemini}
+                        className="px-3 py-1.5 rounded-xl bg-indigo-900 hover:bg-indigo-800 text-indigo-200 border border-indigo-700 text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm mr-2"
+                        title="Retry extraction using the built-in rule-based engine instead of Gemini"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 text-indigo-400" /> Rule-based Extract
+                      </button>
+                      <button
                         onClick={handleExportReconstructedSVG}
                         className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm"
                         title="Download exact on-screen live SVG"
@@ -1146,15 +1232,24 @@ export function DemoWorkspace() {
                   </div>
 
                   {/* Live Recharts Canvas Container */}
-                  <LiveReconstructedPreview
-                    currentArtifact={currentArtifact}
-                    renderMode={renderMode}
-                    chartContainerRef={chartContainerRef}
-                    key={`preview-canvas-${currentArtifact.id}-${renderMode}`}
-                  />
+                  {currentArtifact.error ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-950/50 rounded-2xl border border-red-900/30">
+                      <AlertCircle className="w-12 h-12 text-red-500 mb-4 opacity-80" />
+                      <h4 className="text-red-400 font-semibold mb-2">Extraction Failed</h4>
+                      <p className="text-slate-400 text-sm max-w-md">{currentArtifact.error}</p>
+                    </div>
+                  ) : (
+                    <LiveReconstructedPreview
+                      currentArtifact={currentArtifact}
+                      renderMode={renderMode}
+                      chartContainerRef={chartContainerRef}
+                      key={`preview-canvas-${currentArtifact.id}-${renderMode}`}
+                    />
+                  )}
                 </div>
               </div>
             </div>
+
             {/* ── Interactive Table & Data Series Editor (Pure Consumer) ── */}
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">

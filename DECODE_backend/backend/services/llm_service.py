@@ -674,23 +674,24 @@ class GeminiLLM(BaseLLM):
     """
 
     def __init__(self, api_key: str):
-        self.api_key = api_key
+        self.api_keys = [k.strip() for k in api_key.split(",") if k.strip()]
+        self.primary_api_key = self.api_keys[0] if self.api_keys else ""
         self._sdk_model = None
         self._init_client()
 
     def _init_client(self):
         try:
             import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            self._sdk_model = genai.GenerativeModel("gemini-1.5-flash")
-            logger.info("Gemini SDK initialised successfully")
+            genai.configure(api_key=self.primary_api_key)
+            self._sdk_model = genai.GenerativeModel("gemini-3.6-flash")
+            logger.info("Gemini SDK initialised successfully with primary key")
         except Exception as e:
             logger.info("Using direct REST endpoint for Gemini Vision: %s", e)
             self._sdk_model = None
 
     def _generate_with_rest(self, prompt: str, image_b64: Optional[str] = None, mime_type: str = "image/png") -> str:
         """Call Gemini REST API directly with multimodal payload."""
-        models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+        models = ["gemini-3.6-flash"]
         last_error = None
 
         parts = [{"text": prompt}]
@@ -710,23 +711,24 @@ class GeminiLLM(BaseLLM):
             }
         }
 
-        for model_name in models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
-            try:
-                resp = requests.post(url, json=body, timeout=45)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates and "content" in candidates[0]:
-                        c_parts = candidates[0]["content"].get("parts", [])
-                        if c_parts:
-                            return c_parts[0].get("text", "")
-                else:
-                    logger.warning("Gemini REST model %s returned status %d: %s", model_name, resp.status_code, resp.text[:200])
-                    last_error = f"Status {resp.status_code}: {resp.text[:200]}"
-            except Exception as e:
-                logger.warning("Gemini REST request error for %s: %s", model_name, e)
-                last_error = str(e)
+        for key in self.api_keys:
+            for model_name in models:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+                try:
+                    resp = requests.post(url, json=body, timeout=45)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates", [])
+                        if candidates and "content" in candidates[0]:
+                            c_parts = candidates[0]["content"].get("parts", [])
+                            if c_parts:
+                                return c_parts[0].get("text", "")
+                    else:
+                        logger.warning("Gemini REST model %s with key ...%s returned status %d: %s", model_name, key[-4:], resp.status_code, resp.text[:200])
+                        last_error = f"Status {resp.status_code}: {resp.text[:200]}"
+                except Exception as e:
+                    logger.warning("Gemini REST request error for %s: %s", model_name, e)
+                    last_error = str(e)
 
         raise RuntimeError(f"Gemini API request failed: {last_error}")
 
