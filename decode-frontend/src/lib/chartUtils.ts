@@ -1,99 +1,323 @@
-import { CanonicalChart, ChartRenderType, ChartSeries, ChartDataPoint } from '../store/useChartStore';
+import type {
+  CanonicalChart,
+  ChartRenderType,
+  ChartDataPoint,
+  ChartSeries,
+} from "@/store/useChartStore";
 
-export function reconstructChart(extraction: any, chartType: string): CanonicalChart {
-  const activeType = chartType as ChartRenderType;
-  
-  // Basic validation and mapping from extraction format to canonical
-  const series: ChartSeries[] = (extraction.series || []).map((s: any, idx: number) => ({
-    id: s.id || `series_${idx}`,
-    name: s.name || `Series ${idx + 1}`,
-    color: s.color || ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#0088FE', '#00C49F', '#FFBB28', '#FF8042'][idx % 8]
-  }));
+/* ============================================================
+   VALID CHART TYPES
+   ============================================================ */
 
-  const data: ChartDataPoint[] = (extraction.data || []).map((d: any, idx: number) => {
-    // If the data is missing values, default them to null
-    const values: Record<string, number | null> = {};
-    series.forEach((s) => {
-      values[s.id] = (d.values && d.values[s.id] !== undefined && d.values[s.id] !== null) ? Number(d.values[s.id]) : null;
+export function getValidChartTypes(
+  chart?: CanonicalChart | null
+): ChartRenderType[] {
+  const all: ChartRenderType[] = [
+    "bar",
+    "line",
+    "area",
+    "scatter",
+    "pie",
+    "donut",
+    "stacked_bar",
+    "radar",
+    "table",
+  ];
+
+  if (!chart) {
+    return all;
+  }
+
+  return all;
+}
+
+/* ============================================================
+   NORMALIZE CHART
+   ============================================================ */
+
+export function normalizeChart(
+  input: unknown
+): CanonicalChart {
+  const raw = (input ?? {}) as Record<string, unknown>;
+
+  const categories = Array.isArray(raw.categories)
+    ? raw.categories.map(String)
+    : [];
+
+  const rawSeries = Array.isArray(raw.series)
+    ? raw.series
+    : [];
+
+  const series: ChartSeries[] =
+    rawSeries.map((item, index) => {
+      const s =
+        (item ?? {}) as Record<string, unknown>;
+
+      const values = Array.isArray(s.values)
+        ? s.values.map((v) => Number(v ?? 0))
+        : [];
+
+      return {
+        id:
+          String(
+            s.id ??
+            `series_${index + 1}`
+          ),
+
+        name:
+          String(
+            s.name ??
+            `Series ${index + 1}`
+          ),
+
+        values,
+      };
     });
 
-    return {
-      id: d.id || `cat_${idx}`,
-      category: d.category || `Category ${idx + 1}`,
-      values
-    };
-  });
+  let data: ChartDataPoint[] = [];
+
+  if (Array.isArray(raw.data)) {
+    data = raw.data.map((item, index) => {
+      const row =
+        (item ?? {}) as Record<string, unknown>;
+
+      const result: ChartDataPoint = {
+        category:
+          String(
+            row.category ??
+            categories[index] ??
+            `Category ${index + 1}`
+          ),
+      };
+
+      for (const s of series) {
+        result[s.id] =
+          Number(row[s.id] ?? 0);
+      }
+
+      return result;
+    });
+  } else {
+    data = categories.map(
+      (category, index) => {
+        const row: ChartDataPoint = {
+          category,
+        };
+
+        for (const s of series) {
+          row[s.id] =
+            Number(
+              s.values?.[index] ?? 0
+            );
+        }
+
+        return row;
+      }
+    );
+  }
+
+  const chartType =
+    String(
+      raw.chart_type ??
+      raw.activeType ??
+      "bar"
+    ) as ChartRenderType;
 
   return {
-    id: extraction.id || `chart_${Date.now()}`,
-    title: extraction.title || 'Untitled Chart',
-    sourceType: chartType,
-    activeType,
-    xAxisLabel: extraction.xAxisLabel,
-    yAxisLabel: extraction.yAxisLabel,
+    id:
+      String(
+        raw.id ??
+        `chart_${Date.now()}`
+      ),
+
+    title:
+      String(
+        raw.title ??
+        "Untitled Chart"
+      ),
+
+    sourceType:
+      String(
+        raw.sourceType ??
+        "pdf"
+      ),
+
+    activeType: chartType,
+
+    chart_type: chartType,
+
+    xAxisLabel:
+      raw.xAxisLabel
+        ? String(raw.xAxisLabel)
+        : undefined,
+
+    yAxisLabel:
+      raw.yAxisLabel
+        ? String(raw.yAxisLabel)
+        : undefined,
+
+    categories,
+
     series,
+
     data,
-    confidence: extraction.confidence || 1.0,
-    editHistory: []
+
+    confidence:
+      typeof raw.confidence === "number"
+        ? raw.confidence
+        : undefined,
+
+    editHistory:
+      Array.isArray(raw.editHistory)
+        ? raw.editHistory as CanonicalChart["editHistory"]
+        : [],
+
+    metadata:
+      typeof raw.metadata === "object" &&
+      raw.metadata !== null
+        ? raw.metadata as Record<string, unknown>
+        : undefined,
   };
 }
 
-export function getValidChartTypes(chart: CanonicalChart): { type: ChartRenderType, disabled: boolean, reason?: string }[] {
-  const numericSeriesCount = chart.series.length;
-  const categoryCount = chart.data.length;
+/* ============================================================
+   RECONSTRUCT CHART
+   ============================================================ */
 
-  const validTypes: { type: ChartRenderType, disabled: boolean, reason?: string }[] = [
-    { type: 'bar', disabled: false },
-    { type: 'stacked_bar', disabled: false },
-    { type: 'line', disabled: false },
-    { type: 'area', disabled: false },
-    { type: 'pie', disabled: false },
-    { type: 'donut', disabled: false },
-    { type: 'table', disabled: false }
+export function reconstructChart(
+  input: unknown
+): CanonicalChart {
+  return normalizeChart(input);
+}
+
+/* ============================================================
+   CSV EXPORT
+   ============================================================ */
+
+export function exportToCSV(
+  chart: CanonicalChart
+): string {
+  const normalized =
+    normalizeChart(chart);
+
+  const headers = [
+    "Category",
+    ...normalized.series.map(
+      (series) => series.name
+    ),
   ];
 
-  if (numericSeriesCount < 2) {
-    validTypes.push({ type: 'scatter', disabled: true, reason: 'Scatter requires at least 2 series' });
-  } else {
-    validTypes.push({ type: 'scatter', disabled: false });
-  }
+  const rows = normalized.data.map(
+    (row) => [
+      String(row.category ?? ""),
+      ...normalized.series.map(
+        (series) =>
+          String(
+            row[series.id] ?? ""
+          )
+      ),
+    ]
+  );
 
-  if (categoryCount < 3) {
-    validTypes.push({ type: 'radar', disabled: true, reason: 'Radar requires at least 3 categories' });
-  } else {
-    validTypes.push({ type: 'radar', disabled: false });
-  }
+  return [
+    headers,
+    ...rows,
+  ]
+    .map((row) =>
+      row
+        .map((value) => {
+          const escaped =
+            value.replace(
+              /"/g,
+              '""'
+            );
 
-  // Sort them in a consistent order
-  const order: ChartRenderType[] = ['bar', 'stacked_bar', 'line', 'area', 'pie', 'donut', 'scatter', 'radar', 'table'];
-  validTypes.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type));
-
-  return validTypes;
+          return `"${escaped}"`;
+        })
+        .join(",")
+    )
+    .join("\n");
 }
 
-export function exportToCSV(chart: CanonicalChart) {
-  const headers = ['Category', ...chart.series.map(s => s.name)];
-  const rows = chart.data.map(d => {
-    const row = [d.category];
-    chart.series.forEach(s => {
-      row.push(d.values[s.id] !== null ? String(d.values[s.id]) : '');
-    });
-    return row.join(',');
-  });
+/* ============================================================
+   DOWNLOAD CSV
+   ============================================================ */
 
-  const csvContent = [headers.join(','), ...rows].join('\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', `${chart.title || 'chart_data'}.csv`);
-  link.click();
+export function downloadCSV(
+  chart: CanonicalChart
+): void {
+  const csv =
+    exportToCSV(chart);
+
+  const blob =
+    new Blob(
+      [csv],
+      {
+        type:
+          "text/csv;charset=utf-8;",
+      }
+    );
+
+  const url =
+    URL.createObjectURL(blob);
+
+  const anchor =
+    document.createElement("a");
+
+  anchor.href = url;
+
+  anchor.download =
+    `${chart.title || "decode-chart"}.csv`;
+
+  document.body.appendChild(anchor);
+
+  anchor.click();
+
+  document.body.removeChild(anchor);
+
+  URL.revokeObjectURL(url);
 }
 
-export function copyChartConfig(chart: CanonicalChart) {
-  navigator.clipboard.writeText(JSON.stringify(chart, null, 2)).then(() => {
-    alert("Chart config copied to clipboard!");
-  }).catch(err => {
-    console.error("Failed to copy config", err);
-  });
+/* ============================================================
+   COPY CONFIG
+   ============================================================ */
+
+export async function copyChartConfig(
+  chart: CanonicalChart
+): Promise<void> {
+  const normalized =
+    normalizeChart(chart);
+
+  const payload =
+    JSON.stringify(
+      normalized,
+      null,
+      2
+    );
+
+  await navigator.clipboard.writeText(
+    payload
+  );
+}
+
+/* ============================================================
+   NUMBER FORMATTER
+   ============================================================ */
+
+export function formatChartValue(
+  value: unknown
+): string {
+  const numeric =
+    Number(value);
+
+  if (!Number.isFinite(numeric)) {
+    return String(value ?? "");
+  }
+
+  return new Intl.NumberFormat(
+    "en-US",
+    {
+      maximumFractionDigits: 2,
+    }
+  ).format(numeric);
 }

@@ -1,0 +1,3406 @@
+﻿1: "use client";
+2: /* eslint-disable */
+3: 
+4: import React, {
+5:   ChangeEvent,
+6:   useMemo,
+7:   useRef,
+8:   useState,
+9: } from "react";
+10: 
+11: import {
+12:   Activity,
+13:   AlertCircle,
+14:   BarChart3,
+15:   Check,
+16:   ChevronDown,
+17:   CloudUpload,
+18:   Copy,
+19:   Database,
+20:   Download,
+21:   FileChartColumn,
+22:   FileText,
+23:   Layers3,
+24:   Loader2,
+25:   Plus,
+26:   RefreshCw,
+27:   RotateCcw,
+28:   RotateCw,
+29:   ScanLine,
+30:   ShieldCheck,
+31:   Sparkles,
+32:   Table2,
+33:   Trash2,
+34:   Upload,
+35:   WandSparkles,
+36:   X,
+37: } from "lucide-react";
+38: 
+39: import {
+40:   Area,
+41:   AreaChart,
+42:   Bar,
+43:   BarChart,
+44:   CartesianGrid,
+45:   Cell,
+46:   Legend,
+47:   Line,
+48:   LineChart,
+49:   Pie,
+50:   PieChart,
+51:   PolarAngleAxis,
+52:   PolarGrid,
+53:   PolarRadiusAxis,
+54:   Radar,
+55:   RadarChart,
+56:   ResponsiveContainer,
+57:   Tooltip,
+58:   XAxis,
+59:   YAxis,
+60: } from "recharts";
+61: 
+62: import {
+63:   getApiErrorMessage,
+64:   getChart,
+65:   getDocument,
+66:   getDocumentCharts,
+67:   getDocumentStatus,
+68:   uploadDocument,
+69: } from "@/lib/api";
+70: 
+71: /* ============================================================
+72:    TYPES
+73:    ============================================================ */
+74: 
+75: type ChartMode =
+76:   | "bar"
+77:   | "line"
+78:   | "area"
+79:   | "pie"
+80:   | "donut"
+81:   | "radar";
+82: 
+83: type ExtractedSeries = {
+84:   id: string;
+85:   name: string;
+86:   values: number[];
+87: };
+88: 
+89: type ExtractedChart = {
+90:   id: string;
+91:   title: string;
+92:   chartType: ChartMode;
+93:   confidence: number | null;
+94:   categories: string[];
+95:   series: ExtractedSeries[];
+96:   page?: number | null;
+97:   raw: any;
+98: };
+99: 
+100: type EditableRow = {
+101:   category: string;
+102:   values: Record<string, number>;
+103: };
+104: 
+105: /* ============================================================
+106:    CONSTANTS
+107:    ============================================================ */
+108: 
+109: const SERIES_COLORS = [
+110:   "#6EE7B7",
+111:   "#60A5FA",
+112:   "#FBBF24",
+113:   "#F472B6",
+114:   "#A78BFA",
+115:   "#FB7185",
+116:   "#22D3EE",
+117:   "#34D399",
+118: ];
+119: 
+120: const CHART_MODES: ChartMode[] = [
+121:   "bar",
+122:   "line",
+123:   "area",
+124:   "pie",
+125:   "donut",
+126:   "radar",
+127: ];
+128: 
+129: /* ============================================================
+130:    HELPERS
+131:    ============================================================ */
+132: 
+133: function safeNumber(value: unknown, fallback = 0): number {
+134:   if (typeof value === "number") {
+135:     return Number.isFinite(value) ? value : fallback;
+136:   }
+137: 
+138:   if (typeof value === "string") {
+139:     const cleaned = value
+140:       .replace(/,/g, "")
+141:       .replace(/%/g, "")
+142:       .trim();
+143: 
+144:     const parsed = Number(cleaned);
+145: 
+146:     return Number.isFinite(parsed)
+147:       ? parsed
+148:       : fallback;
+149:   }
+150: 
+151:   if (
+152:     value &&
+153:     typeof value === "object"
+154:   ) {
+155:     const objectValue = value as Record<string, unknown>;
+156: 
+157:     return safeNumber(
+158:       objectValue.value ??
+159:         objectValue.y ??
+160:         objectValue.numeric_value ??
+161:         objectValue.number,
+162:       fallback
+163:     );
+164:   }
+165: 
+166:   return fallback;
+167: }
+168: 
+169: function cleanLabel(value: unknown, fallback: string): string {
+170:   if (
+171:     typeof value === "string" &&
+172:     value.trim()
+173:   ) {
+174:     return value.trim();
+175:   }
+176: 
+177:   if (
+178:     typeof value === "number" &&
+179:     Number.isFinite(value)
+180:   ) {
+181:     return String(value);
+182:   }
+183: 
+184:   return fallback;
+185: }
+186: 
+187: function normalizeChartType(
+188:   value: unknown
+189: ): ChartMode {
+190:   const normalized = String(
+191:     value ?? "bar"
+192:   )
+193:     .toLowerCase()
+194:     .replace(/[\s-]+/g, "_");
+195: 
+196:   if (normalized.includes("donut")) {
+197:     return "donut";
+198:   }
+199: 
+200:   if (
+201:     normalized === "pie" ||
+202:     normalized.includes("pie")
+203:   ) {
+204:     return "pie";
+205:   }
+206: 
+207:   if (
+208:     normalized === "line" ||
+209:     normalized.includes("line")
+210:   ) {
+211:     return "line";
+212:   }
+213: 
+214:   if (
+215:     normalized === "area" ||
+216:     normalized.includes("area")
+217:   ) {
+218:     return "area";
+219:   }
+220: 
+221:   if (
+222:     normalized === "radar" ||
+223:     normalized.includes("radar")
+224:   ) {
+225:     return "radar";
+226:   }
+227: 
+228:   return "bar";
+229: }
+230: 
+231: function unwrapChart(
+232:   payload: any
+233: ): any {
+234:   if (!payload) {
+235:     return null;
+236:   }
+237: 
+238:   return (
+239:     payload.chart ??
+240:     payload.data?.chart ??
+241:     payload.data ??
+242:     payload
+243:   );
+244: }
+245: 
+246: function extractDocumentId(
+247:   payload: any
+248: ): string | null {
+249:   return (
+250:     payload?.document_id ??
+251:     payload?.documentId ??
+252:     payload?.id ??
+253:     payload?.document?.id ??
+254:     payload?.data?.document_id ??
+255:     payload?.data?.documentId ??
+256:     payload?.data?.id ??
+257:     payload?.data?.document?.id ??
+258:     null
+259:   );
+260: }
+261: 
+262: function extractDocumentName(
+263:   payload: any
+264: ): string | null {
+265:   return (
+266:     payload?.filename ??
+267:     payload?.file_name ??
+268:     payload?.document_name ??
+269:     payload?.name ??
+270:     payload?.document?.filename ??
+271:     payload?.document?.name ??
+272:     payload?.data?.filename ??
+273:     payload?.data?.file_name ??
+274:     payload?.data?.document_name ??
+275:     null
+276:   );
+277: }
+278: 
+279: /* ============================================================
+280:    GENERIC SERIES NORMALIZATION
+281:    ============================================================ */
+282: 
+283: function normalizeValueArray(
+284:   value: any
+285: ): number[] {
+286:   if (!Array.isArray(value)) {
+287:     return [];
+288:   }
+289: 
+290:   return value.map((item) =>
+291:     safeNumber(item)
+292:   );
+293: }
+294: 
+295: function getSeriesValues(
+296:   series: any
+297: ): number[] {
+298:   if (!series) {
+299:     return [];
+300:   }
+301: 
+302:   const values =
+303:     series.values ??
+304:     series.data ??
+305:     series.points ??
+306:     series.y_values ??
+307:     series.y ??
+308:     [];
+309: 
+310:   if (!Array.isArray(values)) {
+311:     return [];
+312:   }
+313: 
+314:   return normalizeValueArray(values);
+315: }
+316: 
+317: function inferCategoriesFromSeries(
+318:   series: any[]
+319: ): string[] {
+320:   const first = series?.[0];
+321: 
+322:   if (!first) {
+323:     return [];
+324:   }
+325: 
+326:   const points =
+327:     first.data ??
+328:     first.points ??
+329:     [];
+330: 
+331:   if (!Array.isArray(points)) {
+332:     return [];
+333:   }
+334: 
+335:   return points.map(
+336:     (point: any, index: number) =>
+337:       cleanLabel(
+338:         point?.category ??
+339:           point?.label ??
+340:           point?.x ??
+341:           point?.name,
+342:         `Category ${index + 1}`
+343:       )
+344:   );
+345: }
+346: 
+347: /* ============================================================
+348:    DATA-ROW FORMAT
+349:    ============================================================ */
+350: 
+351: function normalizeFromDataRows(
+352:   chart: any
+353: ): {
+354:   categories: string[];
+355:   series: ExtractedSeries[];
+356: } | null {
+357:   const rows =
+358:     Array.isArray(chart?.data)
+359:       ? chart.data
+360:       : Array.isArray(chart?.rows)
+361:         ? chart.rows
+362:         : null;
+363: 
+364:   if (!rows || rows.length === 0) {
+365:     return null;
+366:   }
+367: 
+368:   if (
+369:     typeof rows[0] !== "object" ||
+370:     rows[0] === null
+371:   ) {
+372:     return null;
+373:   }
+374: 
+375:   const firstRow =
+376:     rows[0] as Record<string, unknown>;
+377: 
+378:   const keys = Object.keys(firstRow);
+379: 
+380:   const categoryKey =
+381:     [
+382:       "category",
+383:       "label",
+384:       "name",
+385:       "x",
+386:       "group",
+387:     ].find((key) =>
+388:       keys.includes(key)
+389:     ) ?? keys[0];
+390: 
+391:   const numericKeys = keys.filter(
+392:     (key) => {
+393:       if (key === categoryKey) {
+394:         return false;
+395:       }
+396: 
+397:       return rows.some((row: any) => {
+398:         const value = row?.[key];
+399: 
+400:         if (
+401:           typeof value === "number" &&
+402:           Number.isFinite(value)
+403:         ) {
+404:           return true;
+405:         }
+406: 
+407:         if (
+408:           typeof value === "string" &&
+409:           value.trim() !== ""
+410:         ) {
+411:           return Number.isFinite(
+412:             Number(
+413:               value.replace(/,/g, "")
+414:             )
+415:           );
+416:         }
+417: 
+418:         return false;
+419:       });
+420:     }
+421:   );
+422: 
+423:   if (numericKeys.length === 0) {
+424:     return null;
+425:   }
+426: 
+427:   const categories = rows.map(
+428:     (row: any, index: number) =>
+429:       cleanLabel(
+430:         row?.[categoryKey],
+431:         `Category ${index + 1}`
+432:       )
+433:   );
+434: 
+435:   const series = numericKeys.map(
+436:     (key, seriesIndex) => ({
+437:       id: `series-${seriesIndex}-${key}`,
+438:       name: key,
+439:       values: rows.map(
+440:         (row: any) =>
+441:           safeNumber(row?.[key])
+442:       ),
+443:     })
+444:   );
+445: 
+446:   return {
+447:     categories,
+448:     series,
+449:   };
+450: }
+451: 
+452: /* ============================================================
+453:    CHART NORMALIZATION
+454:    ============================================================ */
+455: 
+456: function normalizeExtractedChart(
+457:   payload: any,
+458:   fallbackIndex = 0
+459: ): ExtractedChart | null {
+460:   const chart = unwrapChart(payload);
+461: 
+462:   if (!chart) {
+463:     return null;
+464:   }
+465: 
+466:   const id = String(
+467:     chart.id ??
+468:       chart.chart_id ??
+469:       chart.chartId ??
+470:       `extracted-chart-${fallbackIndex + 1}`
+471:   );
+472: 
+473:   const title =
+474:     cleanLabel(
+475:       chart.title ??
+476:         chart.name ??
+477:         chart.chart_title ??
+478:         chart.figure_title,
+479:       `Extracted Chart ${fallbackIndex + 1}`
+480:     );
+481: 
+482:   const chartType = normalizeChartType(
+483:     chart.chart_type ??
+484:       chart.chartType ??
+485:       chart.type ??
+486:       chart.render_type ??
+487:       chart.renderType
+488:   );
+489: 
+490:   const confidenceRaw =
+491:     chart.confidence ??
+492:     chart.source_confidence ??
+493:     chart.extraction_confidence ??
+494:     chart.score ??
+495:     null;
+496: 
+497:   let confidence: number | null = null;
+498: 
+499:   if (confidenceRaw !== null) {
+500:     const number = safeNumber(
+501:       confidenceRaw,
+502:       NaN
+503:     );
+504: 
+505:     if (Number.isFinite(number)) {
+506:       confidence =
+507:         number <= 1
+508:           ? number * 100
+509:           : number;
+510:     }
+511:   }
+512: 
+513:   let categories: string[] =
+514:     Array.isArray(chart.categories)
+515:       ? chart.categories.map(
+516:           (item: unknown, index: number) =>
+517:             cleanLabel(
+518:               item,
+519:               `Category ${index + 1}`
+520:             )
+521:         )
+522:       : Array.isArray(chart.labels)
+523:         ? chart.labels.map(
+524:             (item: unknown, index: number) =>
+525:               cleanLabel(
+526:                 item,
+527:                 `Category ${index + 1}`
+528:               )
+529:           )
+530:         : Array.isArray(chart.x_values)
+531:           ? chart.x_values.map(
+532:               (item: unknown, index: number) =>
+533:                 cleanLabel(
+534:                   item,
+535:                   `Category ${index + 1}`
+536:                 )
+537:             )
+538:           : [];
+539: 
+540:   let series: ExtractedSeries[] = [];
+541: 
+542:   if (
+543:     Array.isArray(chart.series) &&
+544:     chart.series.length > 0
+545:   ) {
+546:     series = chart.series.map(
+547:       (item: any, index: number) => ({
+548:         id: String(
+549:           item?.id ??
+550:             item?.series_id ??
+551:             `series-${index}`
+552:         ),
+553:         name: cleanLabel(
+554:           item?.name ??
+555:             item?.label ??
+556:             item?.title ??
+557:             item?.key,
+558:           `Series ${index + 1}`
+559:         ),
+560:         values: getSeriesValues(item),
+561:       })
+562:     );
+563: 
+564:     if (
+565:       categories.length === 0
+566:     ) {
+567:       categories =
+568:         inferCategoriesFromSeries(
+569:           chart.series
+570:         );
+571:     }
+572:   }
+573: 
+574:   if (
+575:     categories.length === 0 ||
+576:     series.length === 0
+577:   ) {
+578:     const fromRows =
+579:       normalizeFromDataRows(chart);
+580: 
+581:     if (fromRows) {
+582:       categories =
+583:         fromRows.categories;
+584: 
+585:       series =
+586:         fromRows.series;
+587:     }
+588:   }
+589: 
+590:   /*
+591:    * Some backend formats store:
+592:    *
+593:    * data: {
+594:    *   categories: [],
+595:    *   series: []
+596:    * }
+597:    */
+598:   if (
+599:     categories.length === 0 &&
+600:     chart.data &&
+601:     typeof chart.data === "object" &&
+602:     !Array.isArray(chart.data)
+603:   ) {
+604:     const nested =
+605:       chart.data;
+606: 
+607:     if (
+608:       Array.isArray(
+609:         nested.categories
+610:       )
+611:     ) {
+612:       categories =
+613:         nested.categories.map(
+614:           (
+615:             item: unknown,
+616:             index: number
+617:           ) =>
+618:             cleanLabel(
+619:               item,
+620:               `Category ${index + 1}`
+621:             )
+622:         );
+623:     }
+624: 
+625:     if (
+626:       Array.isArray(nested.series)
+627:     ) {
+628:       series =
+629:         nested.series.map(
+630:           (
+631:             item: any,
+632:             index: number
+633:           ) => ({
+634:             id: String(
+635:               item?.id ??
+636:                 `series-${index}`
+637:             ),
+638:             name: cleanLabel(
+639:               item?.name ??
+640:                 item?.label,
+641:               `Series ${index + 1}`
+642:             ),
+643:             values:
+644:               getSeriesValues(item),
+645:           })
+646:         );
+647:     }
+648:   }
+649: 
+650:   /*
+651:    * Never pretend an empty extraction
+652:    * is valid chart data.
+653:    */
+654:   if (
+655:     categories.length === 0 ||
+656:     series.length === 0
+657:   ) {
+658:     return {
+659:       id,
+660:       title,
+661:       chartType,
+662:       confidence,
+663:       categories: [],
+664:       series: [],
+665:       page:
+666:         chart.page ??
+667:         chart.page_number ??
+668:         chart.pageNumber ??
+669:         null,
+670:       raw: payload,
+671:     };
+672:   }
+673: 
+674:   const maxLength =
+675:     Math.max(
+676:       categories.length,
+677:       ...series.map(
+678:         (item) =>
+679:           item.values.length
+680:       )
+681:     );
+682: 
+683:   while (
+684:     categories.length <
+685:     maxLength
+686:   ) {
+687:     categories.push(
+688:       `Category ${categories.length + 1}`
+689:     );
+690:   }
+691: 
+692:   series = series.map(
+693:     (item) => ({
+694:       ...item,
+695:       values: [
+696:         ...item.values,
+697:         ...Array(
+698:           Math.max(
+699:             0,
+700:             categories.length -
+701:               item.values.length
+702:           )
+703:         ).fill(0),
+704:       ],
+705:     })
+706:   );
+707: 
+708:   return {
+709:     id,
+710:     title,
+711:     chartType,
+712:     confidence,
+713:     categories,
+714:     series,
+715:     page:
+716:       chart.page ??
+717:       chart.page_number ??
+718:       chart.pageNumber ??
+719:       null,
+720:     raw: payload,
+721:   };
+722: }
+723: 
+724: /* ============================================================
+725:    EXTRACT CHART ARRAY
+726:    ============================================================ */
+727: 
+728: function extractChartList(
+729:   payload: any
+730: ): any[] {
+731:   if (Array.isArray(payload)) {
+732:     return payload;
+733:   }
+734: 
+735:   if (
+736:     Array.isArray(payload?.charts)
+737:   ) {
+738:     return payload.charts;
+739:   }
+740: 
+741:   if (
+742:     Array.isArray(payload?.data?.charts)
+743:   ) {
+744:     return payload.data.charts;
+745:   }
+746: 
+747:   if (
+748:     Array.isArray(payload?.results)
+749:   ) {
+750:     return payload.results;
+751:   }
+752: 
+753:   if (
+754:     Array.isArray(payload?.data)
+755:   ) {
+756:     return payload.data;
+757:   }
+758: 
+759:   return [];
+760: }
+761: 
+762: /* ============================================================
+763:    EDITABLE ROWS
+764:    ============================================================ */
+765: 
+766: function chartToRows(
+767:   chart: ExtractedChart
+768: ): EditableRow[] {
+769:   return chart.categories.map(
+770:     (category, rowIndex) => {
+771:       const values: Record<
+772:         string,
+773:         number
+774:       > = {};
+775: 
+776:       chart.series.forEach(
+777:         (series) => {
+778:           values[series.id] =
+779:             safeNumber(
+780:               series.values[rowIndex]
+781:             );
+782:         }
+783:       );
+784: 
+785:       return {
+786:         category,
+787:         values,
+788:       };
+789:     }
+790:   );
+791: }
+792: 
+793: function rowsToChartData(
+794:   rows: EditableRow[],
+795:   series: ExtractedSeries[]
+796: ) {
+797:   return rows.map(
+798:     (row) => {
+799:       const output: Record<
+800:         string,
+801:         string | number
+802:       > = {
+803:         category: row.category,
+804:       };
+805: 
+806:       series.forEach(
+807:         (series) => {
+808:           output[series.id] =
+809:             safeNumber(
+810:               row.values[series.id]
+811:             );
+812:         }
+813:       );
+814: 
+815:       return output;
+816:     }
+817:   );
+818: }
+819: 
+820: /* ============================================================
+821:    COMPONENT
+822:    ============================================================ */
+823: 
+824: export default function DemoWorkspace() {
+825:   const fileInputRef =
+826:     useRef<HTMLInputElement | null>(
+827:       null
+828:     );
+829: 
+830:   const [fileName, setFileName] =
+831:     useState("No document loaded");
+832: 
+833:   const [documentId, setDocumentId] =
+834:     useState<string | null>(null);
+835: 
+836:   const [charts, setCharts] =
+837:     useState<ExtractedChart[]>([]);
+838: 
+839:   const [selectedChartId, setSelectedChartId] =
+840:     useState<string | null>(null);
+841: 
+842:   const [rows, setRows] =
+843:     useState<EditableRow[]>([]);
+844: 
+845:   const [chartMode, setChartMode] =
+846:     useState<ChartMode>("bar");
+847: 
+848:   const [isUploading, setIsUploading] =
+849:     useState(false);
+850: 
+851:   const [uploadProgress, setUploadProgress] =
+852:     useState(0);
+853: 
+854:   const [processingStage, setProcessingStage] =
+855:     useState("Ready");
+856: 
+857:   const [error, setError] =
+858:     useState<string | null>(null);
+859: 
+860:   const [message, setMessage] =
+861:     useState<string | null>(null);
+862: 
+863:   const [history, setHistory] =
+864:     useState<EditableRow[][]>([]);
+865: 
+866:   const [future, setFuture] =
+867:     useState<EditableRow[][]>([]);
+868: 
+869:   /* ==========================================================
+870:      SELECTED CHART
+871:      ========================================================== */
+872: 
+873:   const selectedChart =
+874:     useMemo(
+875:       () =>
+876:         charts.find(
+877:           (chart) =>
+878:             chart.id ===
+879:             selectedChartId
+880:         ) ?? null,
+881:       [charts, selectedChartId]
+882:     );
+883: 
+884:   const activeSeries =
+885:     selectedChart?.series ?? [];
+886: 
+887:   /* ==========================================================
+888:      METRICS
+889:      ========================================================== */
+890: 
+891:   const metrics =
+892:     useMemo(() => {
+893:       const values =
+894:         rows.flatMap(
+895:           (row) =>
+896:             Object.values(
+897:               row.values
+898:             )
+899:         );
+900: 
+901:       const total =
+902:         values.reduce(
+903:           (sum, value) =>
+904:             sum + safeNumber(value),
+905:           0
+906:         );
+907: 
+908:       const confidenceValues =
+909:         charts
+910:           .map(
+911:             (chart) =>
+912:               chart.confidence
+913:           )
+914:           .filter(
+915:             (
+916:               value
+917:             ): value is number =>
+918:               typeof value ===
+919:               "number"
+920:           );
+921: 
+922:       const confidence =
+923:         confidenceValues.length
+924:           ? confidenceValues.reduce(
+925:               (sum, value) =>
+926:                 sum + value,
+927:               0
+928:             ) /
+929:             confidenceValues.length
+930:           : null;
+931: 
+932:       return {
+933:         artifacts:
+934:           charts.length,
+935:         categories:
+936:           rows.length,
+937:         dataPoints:
+938:           rows.length *
+939:           activeSeries.length,
+940:         total,
+941:         confidence,
+942:       };
+943:     }, [
+944:       rows,
+945:       charts,
+946:       activeSeries,
+947:     ]);
+948: 
+949:   /* ==========================================================
+950:      CHART DATA
+951:      ========================================================== */
+952: 
+953:   const chartData =
+954:     useMemo(
+955:       () =>
+956:         rowsToChartData(
+957:           rows,
+958:           activeSeries
+959:         ),
+960:       [rows, activeSeries]
+961:     );
+962: 
+963:   /* ==========================================================
+964:      HISTORY
+965:      ========================================================== */
+966: 
+967:   const commitRows = (
+968:     next: EditableRow[]
+969:   ) => {
+970:     setHistory(
+971:       (current) => [
+972:         ...current,
+973:         rows.map(
+974:           (row) => ({
+975:             category:
+976:               row.category,
+977:             values: {
+978:               ...row.values,
+979:             },
+980:           })
+981:         ),
+982:       ]
+983:     );
+984: 
+985:     setFuture([]);
+986:     setRows(next);
+987:   };
+988: 
+989:   const undo = () => {
+990:     if (
+991:       history.length === 0
+992:     ) {
+993:       return;
+994:     }
+995: 
+996:     const previous =
+997:       history[
+998:         history.length - 1
+999:       ];
+1000: 
+1001:     setHistory(
+1002:       (current) =>
+1003:         current.slice(
+1004:           0,
+1005:           current.length - 1
+1006:         )
+1007:     );
+1008: 
+1009:     setFuture(
+1010:       (current) => [
+1011:         ...current,
+1012:         rows,
+1013:       ]
+1014:     );
+1015: 
+1016:     setRows(previous);
+1017:   };
+1018: 
+1019:   const redo = () => {
+1020:     if (
+1021:       future.length === 0
+1022:     ) {
+1023:       return;
+1024:     }
+1025: 
+1026:     const next =
+1027:       future[
+1028:         future.length - 1
+1029:       ];
+1030: 
+1031:     setFuture(
+1032:       (current) =>
+1033:         current.slice(
+1034:           0,
+1035:           current.length - 1
+1036:         )
+1037:     );
+1038: 
+1039:     setHistory(
+1040:       (current) => [
+1041:         ...current,
+1042:         rows,
+1043:       ]
+1044:     );
+1045: 
+1046:     setRows(next);
+1047:   };
+1048: 
+1049:   /* ==========================================================
+1050:      SELECT CHART
+1051:      ========================================================== */
+1052: 
+1053:   const selectChart = (
+1054:     chart: ExtractedChart
+1055:   ) => {
+1056:     setSelectedChartId(
+1057:       chart.id
+1058:     );
+1059: 
+1060:     setRows(
+1061:       chartToRows(chart)
+1062:     );
+1063: 
+1064:     setHistory([]);
+1065:     setFuture([]);
+1066: 
+1067:     setChartMode(
+1068:       chart.chartType
+1069:     );
+1070:   };
+1071: 
+1072:   /* ==========================================================
+1073:      UPDATE CELL
+1074:      ========================================================== */
+1075: 
+1076:   const updateCell = (
+1077:     rowIndex: number,
+1078:     seriesId: string,
+1079:     value: string
+1080:   ) => {
+1081:     const next =
+1082:       rows.map(
+1083:         (row, index) => {
+1084:           if (
+1085:             index !== rowIndex
+1086:           ) {
+1087:             return row;
+1088:           }
+1089: 
+1090:           return {
+1091:             ...row,
+1092:             values: {
+1093:               ...row.values,
+1094:               [seriesId]:
+1095:                 safeNumber(
+1096:                   value
+1097:                 ),
+1098:             },
+1099:           };
+1100:         }
+1101:       );
+1102: 
+1103:     commitRows(next);
+1104:   };
+1105: 
+1106:   const updateCategory = (
+1107:     rowIndex: number,
+1108:     value: string
+1109:   ) => {
+1110:     const next =
+1111:       rows.map(
+1112:         (row, index) =>
+1113:           index === rowIndex
+1114:             ? {
+1115:                 ...row,
+1116:                 category:
+1117:                   value,
+1118:               }
+1119:             : row
+1120:       );
+1121: 
+1122:     commitRows(next);
+1123:   };
+1124: 
+1125:   /* ==========================================================
+1126:      ROW OPERATIONS
+1127:      ========================================================== */
+1128: 
+1129:   const addRow = () => {
+1130:     const values: Record<
+1131:       string,
+1132:       number
+1133:     > = {};
+1134: 
+1135:     activeSeries.forEach(
+1136:       (series) => {
+1137:         values[series.id] = 0;
+1138:       }
+1139:     );
+1140: 
+1141:     commitRows([
+1142:       ...rows,
+1143:       {
+1144:         category: `Category ${
+1145:           rows.length + 1
+1146:         }`,
+1147:         values,
+1148:       },
+1149:     ]);
+1150:   };
+1151: 
+1152:   const removeRow = (
+1153:     index: number
+1154:   ) => {
+1155:     if (rows.length <= 1) {
+1156:       return;
+1157:     }
+1158: 
+1159:     commitRows(
+1160:       rows.filter(
+1161:         (_, rowIndex) =>
+1162:           rowIndex !== index
+1163:       )
+1164:     );
+1165:   };
+1166: 
+1167:   /* ==========================================================
+1168:      ADD SERIES
+1169:      ========================================================== */
+1170: 
+1171:   const addSeries = () => {
+1172:     if (!selectedChart) {
+1173:       return;
+1174:     }
+1175: 
+1176:     const id = `series-custom-${Date.now()}`;
+1177: 
+1178:     const newSeries: ExtractedSeries = {
+1179:       id,
+1180:       name: `Series ${
+1181:         activeSeries.length + 1
+1182:       }`,
+1183:       values: rows.map(
+1184:         () => 0
+1185:       ),
+1186:     };
+1187: 
+1188:     const nextChart: ExtractedChart =
+1189:       {
+1190:         ...selectedChart,
+1191:         series: [
+1192:           ...selectedChart.series,
+1193:           newSeries,
+1194:         ],
+1195:       };
+1196: 
+1197:     setCharts(
+1198:       (current) =>
+1199:         current.map(
+1200:           (chart) =>
+1201:             chart.id ===
+1202:             selectedChart.id
+1203:               ? nextChart
+1204:               : chart
+1205:         )
+1206:     );
+1207: 
+1208:     setRows(
+1209:       rows.map(
+1210:         (row) => ({
+1211:           ...row,
+1212:           values: {
+1213:             ...row.values,
+1214:             [id]: 0,
+1215:           },
+1216:         })
+1217:       )
+1218:     );
+1219:   };
+1220: 
+1221:   /* ==========================================================
+1222:      PDF PICKER
+1223:      ========================================================== */
+1224: 
+1225:   const triggerFilePicker =
+1226:     () => {
+1227:       if (isUploading) {
+1228:         return;
+1229:       }
+1230: 
+1231:       setError(null);
+1232:       setMessage(null);
+1233: 
+1234:       fileInputRef.current?.click();
+1235:     };
+1236: 
+1237:   const handleFileSelection =
+1238:     (
+1239:       event: ChangeEvent<HTMLInputElement>
+1240:     ) => {
+1241:       const file =
+1242:         event.target.files?.[0];
+1243: 
+1244:       if (file) {
+1245:         void processPdf(file);
+1246:       }
+1247: 
+1248:       event.target.value = "";
+1249:     };
+1250: 
+1251:   /* ==========================================================
+1252:      POLL DOCUMENT
+1253:      ========================================================== */
+1254: 
+1255:   const waitForPipeline =
+1256:     async (
+1257:       id: string
+1258:     ) => {
+1259:       /*
+1260:        * Backend runs the chart pipeline
+1261:        * in a background thread.
+1262:        *
+1263:        * We therefore wait for the actual
+1264:        * backend status instead of assuming
+1265:        * that 14 seconds is enough.
+1266:        */
+1267: 
+1268:       for (
+1269:         let attempt = 0;
+1270:         attempt < 90;
+1271:         attempt++
+1272:       ) {
+1273:         const status =
+1274:           await getDocumentStatus(
+1275:             id
+1276:           );
+1277: 
+1278:         const rawStatus =
+1279:           String(
+1280:             status?.status ??
+1281:               status?.processing_status ??
+1282:               status?.data?.status ??
+1283:               ""
+1284:           ).toLowerCase();
+1285: 
+1286:         const progress =
+1287:           Math.min(
+1288:             88,
+1289:             35 +
+1290:               Math.round(
+1291:                 (attempt / 90) *
+1292:                   53
+1293:               )
+1294:           );
+1295: 
+1296:         setUploadProgress(
+1297:           progress
+1298:         );
+1299: 
+1300:         setProcessingStage(
+1301:           status?.current_stage ??
+1302:             status?.stage ??
+1303:             "Processing document"
+1304:         );
+1305: 
+1306:         if (
+1307:           rawStatus.includes(
+1308:             "failed"
+1309:           ) ||
+1310:           rawStatus.includes(
+1311:             "error"
+1312:           )
+1313:         ) {
+1314:           throw new Error(
+1315:             status?.error_message ??
+1316:               status?.message ??
+1317:               "DECODE pipeline failed."
+1318:           );
+1319:         }
+1320: 
+1321:         if (
+1322:           rawStatus.includes(
+1323:             "complete"
+1324:           ) ||
+1325:           rawStatus.includes(
+1326:             "success"
+1327:           ) ||
+1328:           rawStatus ===
+1329:             "completed" ||
+1330:           rawStatus === "done"
+1331:         ) {
+1332:           return;
+1333:         }
+1334: 
+1335:         await new Promise(
+1336:           (resolve) =>
+1337:             window.setTimeout(
+1338:               resolve,
+1339:               1000
+1340:             )
+1341:         );
+1342:       }
+1343: 
+1344:       throw new Error(
+1345:         "DECODE is still processing the document. Please wait and refresh the workspace."
+1346:       );
+1347:     };
+1348: 
+1349:   /* ==========================================================
+1350:      FETCH ALL CHARTS
+1351:      ========================================================== */
+1352: 
+1353:   const loadCharts =
+1354:     async (
+1355:       id: string
+1356:     ) => {
+1357:       setProcessingStage(
+1358:         "Loading extracted charts"
+1359:       );
+1360: 
+1361:       let payload: any = null;
+1362: 
+1363:       /*
+1364:        * One extra retry loop is useful because
+1365:        * Firebase/database writes and the background
+1366:        * processing thread may finish almost together.
+1367:        */
+1368: 
+1369:       for (
+1370:         let attempt = 0;
+1371:         attempt < 8;
+1372:         attempt++
+1373:       ) {
+1374:         payload =
+1375:           await getDocumentCharts(
+1376:             id
+1377:           );
+1378: 
+1379:         const summaries =
+1380:           extractChartList(
+1381:             payload
+1382:           );
+1383: 
+1384:         if (
+1385:           summaries.length > 0
+1386:         ) {
+1387:           break;
+1388:         }
+1389: 
+1390:         await new Promise(
+1391:           (resolve) =>
+1392:             window.setTimeout(
+1393:               resolve,
+1394:               1000
+1395:             )
+1396:         );
+1397:       }
+1398: 
+1399:       const summaries =
+1400:         extractChartList(
+1401:           payload
+1402:         );
+1403: 
+1404:       if (
+1405:         summaries.length === 0
+1406:       ) {
+1407:         throw new Error(
+1408:           "The DECODE pipeline completed, but no chart artifacts were returned."
+1409:         );
+1410:       }
+1411: 
+1412:       setProcessingStage(
+1413:         "Reconstructing chart previews"
+1414:       );
+1415: 
+1416:       /*
+1417:        * The document endpoint can return
+1418:        * lightweight chart records.
+1419:        *
+1420:        * Fetch every chart individually so
+1421:        * we get the complete extraction.
+1422:        */
+1423: 
+1424:       const fullCharts =
+1425:         await Promise.all(
+1426:           summaries.map(
+1427:             async (
+1428:               summary: any,
+1429:               index: number
+1430:             ) => {
+1431:               const chartId =
+1432:                 summary?.id ??
+1433:                 summary?.chart_id ??
+1434:                 summary?.chartId;
+1435: 
+1436:               if (!chartId) {
+1437:                 return summary;
+1438:               }
+1439: 
+1440:               try {
+1441:                 return await getChart(
+1442:                   String(
+1443:                     chartId
+1444:                   )
+1445:                 );
+1446:               } catch {
+1447:                 /*
+1448:                  * If the detailed endpoint
+1449:                  * is unavailable, keep the
+1450:                  * summary instead of losing
+1451:                  * the artifact.
+1452:                  */
+1453:                 return summary;
+1454:               }
+1455:             }
+1456:           )
+1457:         );
+1458: 
+1459:       const normalized =
+1460:         fullCharts
+1461:           .map(
+1462:             (
+1463:               chart,
+1464:               index
+1465:             ) =>
+1466:               normalizeExtractedChart(
+1467:                 chart,
+1468:                 index
+1469:               )
+1470:           )
+1471:           .filter(
+1472:             (
+1473:               chart
+1474:             ): chart is ExtractedChart =>
+1475:               Boolean(chart)
+1476:           );
+1477: 
+1478:       if (
+1479:         normalized.length === 0
+1480:       ) {
+1481:         throw new Error(
+1482:           "Charts were detected, but DECODE returned no usable chart objects."
+1483:         );
+1484:       }
+1485: 
+1486:       setCharts(
+1487:         normalized
+1488:       );
+1489: 
+1490:       /*
+1491:        * IMPORTANT:
+1492:        *
+1493:        * We intentionally do NOT create
+1494:        * fake Q1/Q2/Q3/Q4 rows here.
+1495:        */
+1496: 
+1497:       const first =
+1498:         normalized[0];
+1499: 
+1500:       setSelectedChartId(
+1501:         first.id
+1502:       );
+1503: 
+1504:       setRows(
+1505:         chartToRows(first)
+1506:       );
+1507: 
+1508:       setChartMode(
+1509:         first.chartType
+1510:       );
+1511: 
+1512:       setHistory([]);
+1513:       setFuture([]);
+1514: 
+1515:       setUploadProgress(
+1516:         100
+1517:       );
+1518: 
+1519:       setProcessingStage(
+1520:         "Complete"
+1521:       );
+1522: 
+1523:       return normalized;
+1524:     };
+1525: 
+1526:   /* ==========================================================
+1527:      PROCESS PDF
+1528:      ========================================================== */
+1529: 
+1530:   const processPdf =
+1531:     async (
+1532:       file: File
+1533:     ) => {
+1534:       if (isUploading) {
+1535:         return;
+1536:       }
+1537: 
+1538:       if (
+1539:         file.type !==
+1540:           "application/pdf" &&
+1541:         !file.name
+1542:           .toLowerCase()
+1543:           .endsWith(".pdf")
+1544:       ) {
+1545:         setError(
+1546:           "Please select a PDF file."
+1547:         );
+1548:         return;
+1549:       }
+1550: 
+1551:       if (
+1552:         file.size === 0
+1553:       ) {
+1554:         setError(
+1555:           "The selected PDF is empty."
+1556:         );
+1557:         return;
+1558:       }
+1559: 
+1560:       setIsUploading(true);
+1561:       setError(null);
+1562:       setMessage(null);
+1563: 
+1564:       /*
+1565:        * Clear old demo/extracted state
+1566:        * immediately.
+1567:        */
+1568: 
+1569:       setCharts([]);
+1570:       setSelectedChartId(
+1571:         null
+1572:       );
+1573:       setRows([]);
+1574:       setHistory([]);
+1575:       setFuture([]);
+1576: 
+1577:       setFileName(
+1578:         file.name
+1579:       );
+1580: 
+1581:       try {
+1582:         setUploadProgress(
+1583:           5
+1584:         );
+1585: 
+1586:         setProcessingStage(
+1587:           "Uploading PDF"
+1588:         );
+1589: 
+1590:         const uploadResult =
+1591:           await uploadDocument(
+1592:             file
+1593:           );
+1594: 
+1595:         const id =
+1596:           extractDocumentId(
+1597:             uploadResult
+1598:           );
+1599: 
+1600:         if (!id) {
+1601:           throw new Error(
+1602:             "The backend accepted the PDF but did not return a document ID."
+1603:           );
+1604:         }
+1605: 
+1606:         setDocumentId(id);
+1607: 
+1608:         setUploadProgress(
+1609:           20
+1610:         );
+1611: 
+1612:         setProcessingStage(
+1613:           "Document registered"
+1614:         );
+1615: 
+1616:         /*
+1617:          * Metadata is useful for filename/status,
+1618:          * but failure to retrieve it should not
+1619:          * stop chart extraction.
+1620:          */
+1621: 
+1622:         try {
+1623:           const document =
+1624:             await getDocument(
+1625:               id
+1626:             );
+1627: 
+1628:           const backendName =
+1629:             extractDocumentName(
+1630:               document
+1631:             );
+1632: 
+1633:           if (
+1634:             backendName
+1635:           ) {
+1636:             setFileName(
+1637:               backendName
+1638:                 .split(
+1639:                   /[\\/]/
+1640:                 )
+1641:                 .pop() ??
+1642:                 file.name
+1643:             );
+1644:           }
+1645:         } catch {
+1646:           // Metadata is optional.
+1647:         }
+1648: 
+1649:         setUploadProgress(
+1650:           35
+1651:         );
+1652: 
+1653:         await waitForPipeline(
+1654:           id
+1655:         );
+1656: 
+1657:         await loadCharts(
+1658:           id
+1659:         );
+1660: 
+1661:         setMessage(
+1662:           "PDF processed successfully. The workspace is now showing the real extracted chart data."
+1663:         );
+1664:       } catch (
+1665:         uploadError
+1666:       ) {
+1667:         console.error(
+1668:           "DECODE PDF processing error:",
+1669:           uploadError
+1670:         );
+1671: 
+1672:         setError(
+1673:           getApiErrorMessage(
+1674:             uploadError
+1675:           )
+1676:         );
+1677: 
+1678:         setProcessingStage(
+1679:           "Processing failed"
+1680:         );
+1681:       } finally {
+1682:         setIsUploading(
+1683:           false
+1684:         );
+1685: 
+1686:         window.setTimeout(
+1687:           () =>
+1688:             setUploadProgress(
+1689:               0
+1690:             ),
+1691:           1000
+1692:         );
+1693:       }
+1694:     };
+1695: 
+1696:   /* ==========================================================
+1697:      RESET
+1698:      ========================================================== */
+1699: 
+1700:   const resetWorkspace =
+1701:     () => {
+1702:       setDocumentId(null);
+1703:       setFileName(
+1704:         "No document loaded"
+1705:       );
+1706:       setCharts([]);
+1707:       setSelectedChartId(
+1708:         null
+1709:       );
+1710:       setRows([]);
+1711:       setChartMode(
+1712:         "bar"
+1713:       );
+1714:       setHistory([]);
+1715:       setFuture([]);
+1716:       setError(null);
+1717:       setMessage(null);
+1718:       setProcessingStage(
+1719:         "Ready"
+1720:       );
+1721:     };
+1722: 
+1723:   /* ==========================================================
+1724:      CSV
+1725:      ========================================================== */
+1726: 
+1727:   const exportCSV =
+1728:     () => {
+1729:       if (
+1730:         !selectedChart ||
+1731:         rows.length === 0
+1732:       ) {
+1733:         return;
+1734:       }
+1735: 
+1736:       const header = [
+1737:         "Category",
+1738:         ...activeSeries.map(
+1739:           (series) =>
+1740:             series.name
+1741:         ),
+1742:       ];
+1743: 
+1744:       const body =
+1745:         rows.map(
+1746:           (row) =>
+1747:             [
+1748:               `"${row.category.replace(
+1749:                 /"/g,
+1750:                 '""'
+1751:               )}"`,
+1752:               ...activeSeries.map(
+1753:                 (series) =>
+1754:                   row.values[
+1755:                     series.id
+1756:                   ] ?? 0
+1757:               ),
+1758:             ].join(",")
+1759:         );
+1760: 
+1761:       const csv =
+1762:         [
+1763:           header.join(","),
+1764:           ...body,
+1765:         ].join("\n");
+1766: 
+1767:       const blob =
+1768:         new Blob(
+1769:           [csv],
+1770:           {
+1771:             type:
+1772:               "text/csv;charset=utf-8;",
+1773:           }
+1774:         );
+1775: 
+1776:       const url =
+1777:         URL.createObjectURL(
+1778:           blob
+1779:         );
+1780: 
+1781:       const anchor =
+1782:         document.createElement(
+1783:           "a"
+1784:         );
+1785: 
+1786:       anchor.href = url;
+1787: 
+1788:       anchor.download =
+1789:         `${
+1790:           selectedChart.title
+1791:             .replace(
+1792:               /[^a-z0-9]+/gi,
+1793:               "-"
+1794:             )
+1795:             .toLowerCase()
+1796:         }-decoded.csv`;
+1797: 
+1798:       document.body.appendChild(
+1799:         anchor
+1800:       );
+1801: 
+1802:       anchor.click();
+1803: 
+1804:       anchor.remove();
+1805: 
+1806:       URL.revokeObjectURL(
+1807:         url
+1808:       );
+1809:     };
+1810: 
+1811:   /* ==========================================================
+1812:      COPY CONFIG
+1813:      ========================================================== */
+1814: 
+1815:   const copyConfig =
+1816:     async () => {
+1817:       if (
+1818:         !selectedChart
+1819:       ) {
+1820:         return;
+1821:       }
+1822: 
+1823:       const config = {
+1824:         id:
+1825:           selectedChart.id,
+1826:         title:
+1827:           selectedChart.title,
+1828:         chart_type:
+1829:           chartMode,
+1830:         confidence:
+1831:           selectedChart.confidence,
+1832:         categories:
+1833:           rows.map(
+1834:             (row) =>
+1835:               row.category
+1836:           ),
+1837:         series:
+1838:           activeSeries.map(
+1839:             (series) => ({
+1840:               id:
+1841:                 series.id,
+1842:               name:
+1843:                 series.name,
+1844:               values:
+1845:                 rows.map(
+1846:                   (row) =>
+1847:                     row.values[
+1848:                       series.id
+1849:                     ] ?? 0
+1850:                 ),
+1851:             })
+1852:           ),
+1853:       };
+1854: 
+1855:       try {
+1856:         await navigator.clipboard.writeText(
+1857:           JSON.stringify(
+1858:             config,
+1859:             null,
+1860:             2
+1861:           )
+1862:         );
+1863: 
+1864:         setMessage(
+1865:           "Chart configuration copied to clipboard."
+1866:         );
+1867: 
+1868:         window.setTimeout(
+1869:           () =>
+1870:             setMessage(
+1871:               null
+1872:             ),
+1873:           2500
+1874:         );
+1875:       } catch {
+1876:         setError(
+1877:           "Clipboard access was blocked by the browser."
+1878:         );
+1879:       }
+1880:     };
+1881: 
+1882:   /* ==========================================================
+1883:      RENDER CHART
+1884:      ========================================================== */
+1885: 
+1886:   const renderChart =
+1887:     () => {
+1888:       if (
+1889:         !selectedChart ||
+1890:         activeSeries.length ===
+1891:           0 ||
+1892:         rows.length === 0
+1893:       ) {
+1894:         return (
+1895:           <div className="flex h-full items-center justify-center">
+1896:             <div className="max-w-sm text-center">
+1897:               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.02]">
+1898:                 <BarChart3
+1899:                   size={20}
+1900:                   className="text-white/20"
+1901:                 />
+1902:               </div>
+1903: 
+1904:               <div className="mt-4 text-sm font-medium text-white/60">
+1905:                 No extracted chart data
+1906:               </div>
+1907: 
+1908:               <div className="mt-2 text-xs leading-5 text-white/25">
+1909:                 Upload a PDF and DECODE will
+1910:                 populate this visualization
+1911:                 from the extracted chart data.
+1912:               </div>
+1913:             </div>
+1914:           </div>
+1915:         );
+1916:       }
+1917: 
+1918:       if (
+1919:         chartMode ===
+1920:           "pie" ||
+1921:         chartMode ===
+1922:           "donut"
+1923:       ) {
+1924:         const primary =
+1925:           activeSeries[0];
+1926: 
+1927:         const pieData =
+1928:           rows.map(
+1929:             (row) => ({
+1930:               name:
+1931:                 row.category,
+1932:               value:
+1933:                 row.values[
+1934:                   primary.id
+1935:                 ] ?? 0,
+1936:             })
+1937:           );
+1938: 
+1939:         return (
+1940:           <ResponsiveContainer
+1941:             width="100%"
+1942:             height="100%"
+1943:           >
+1944:             <PieChart>
+1945:               <Pie
+1946:                 data={
+1947:                   pieData
+1948:                 }
+1949:                 dataKey="value"
+1950:                 nameKey="name"
+1951:                 cx="50%"
+1952:                 cy="50%"
+1953:                 innerRadius={
+1954:                   chartMode ===
+1955:                   "donut"
+1956:                     ? "58%"
+1957:                     : 0
+1958:                 }
+1959:                 outerRadius="76%"
+1960:                 paddingAngle={
+1961:                   3
+1962:                 }
+1963:               >
+1964:                 {pieData.map(
+1965:                   (
+1966:                     _,
+1967:                     index
+1968:                   ) => (
+1969:                     <Cell
+1970:                       key={
+1971:                         `cell-${index}`
+1972:                       }
+1973:                       fill={
+1974:                         SERIES_COLORS[
+1975:                           index %
+1976:                             SERIES_COLORS.length
+1977:                         ]
+1978:                       }
+1979:                     />
+1980:                   )
+1981:                 )}
+1982:               </Pie>
+1983: 
+1984:               <Tooltip />
+1985: 
+1986:               <Legend />
+1987:             </PieChart>
+1988:           </ResponsiveContainer>
+1989:         );
+1990:       }
+1991: 
+1992:       if (
+1993:         chartMode ===
+1994:         "radar"
+1995:       ) {
+1996:         return (
+1997:           <ResponsiveContainer
+1998:             width="100%"
+1999:             height="100%"
+2000:           >
+2001:             <RadarChart
+2002:               data={
+2003:                 chartData
+2004:               }
+2005:             >
+2006:               <PolarGrid />
+2007: 
+2008:               <PolarAngleAxis
+2009:                 dataKey="category"
+2010:               />
+2011: 
+2012:               <PolarRadiusAxis />
+2013: 
+2014:               {activeSeries.map(
+2015:                 (
+2016:                   series,
+2017:                   index
+2018:                 ) => (
+2019:                   <Radar
+2020:                     key={
+2021:                       series.id
+2022:                     }
+2023:                     name={
+2024:                       series.name
+2025:                     }
+2026:                     dataKey={
+2027:                       series.id
+2028:                     }
+2029:                     stroke={
+2030:                       SERIES_COLORS[
+2031:                         index %
+2032:                           SERIES_COLORS.length
+2033:                       ]
+2034:                     }
+2035:                     fill={
+2036:                       SERIES_COLORS[
+2037:                         index %
+2038:                           SERIES_COLORS.length
+2039:                       ]
+2040:                     }
+2041:                     fillOpacity={
+2042:                       0.18
+2043:                     }
+2044:                   />
+2045:                 )
+2046:               )}
+2047: 
+2048:               <Legend />
+2049: 
+2050:               <Tooltip />
+2051:             </RadarChart>
+2052:           </ResponsiveContainer>
+2053:         );
+2054:       }
+2055: 
+2056:       if (
+2057:         chartMode ===
+2058:         "line"
+2059:       ) {
+2060:         return (
+2061:           <ResponsiveContainer
+2062:             width="100%"
+2063:             height="100%"
+2064:           >
+2065:             <LineChart
+2066:               data={
+2067:                 chartData
+2068:               }
+2069:               margin={{
+2070:                 top: 15,
+2071:                 right: 20,
+2072:                 left: 5,
+2073:                 bottom: 10,
+2074:               }}
+2075:             >
+2076:               <CartesianGrid
+2077:                 strokeDasharray="3 3"
+2078:                 stroke="rgba(255,255,255,.06)"
+2079:               />
+2080: 
+2081:               <XAxis
+2082:                 dataKey="category"
+2083:                 tick={{
+2084:                   fill:
+2085:                     "rgba(255,255,255,.35)",
+2086:                   fontSize: 11,
+2087:                 }}
+2088:               />
+2089: 
+2090:               <YAxis
+2091:                 tick={{
+2092:                   fill:
+2093:                     "rgba(255,255,255,.35)",
+2094:                   fontSize: 11,
+2095:                 }}
+2096:               />
+2097: 
+2098:               <Tooltip />
+2099: 
+2100:               <Legend />
+2101: 
+2102:               {activeSeries.map(
+2103:                 (
+2104:                   series,
+2105:                   index
+2106:                 ) => (
+2107:                   <Line
+2108:                     key={
+2109:                       series.id
+2110:                     }
+2111:                     type="monotone"
+2112:                     dataKey={
+2113:                       series.id
+2114:                     }
+2115:                     name={
+2116:                       series.name
+2117:                     }
+2118:                     stroke={
+2119:                       SERIES_COLORS[
+2120:                         index %
+2121:                           SERIES_COLORS.length
+2122:                       ]
+2123:                     }
+2124:                     strokeWidth={
+2125:                       3
+2126:                     }
+2127:                     dot={{
+2128:                       r: 4,
+2129:                     }}
+2130:                   />
+2131:                 )
+2132:               )}
+2133:             </LineChart>
+2134:           </ResponsiveContainer>
+2135:         );
+2136:       }
+2137: 
+2138:       if (
+2139:         chartMode ===
+2140:         "area"
+2141:       ) {
+2142:         return (
+2143:           <ResponsiveContainer
+2144:             width="100%"
+2145:             height="100%"
+2146:           >
+2147:             <AreaChart
+2148:               data={
+2149:                 chartData
+2150:               }
+2151:               margin={{
+2152:                 top: 15,
+2153:                 right: 20,
+2154:                 left: 5,
+2155:                 bottom: 10,
+2156:               }}
+2157:             >
+2158:               <CartesianGrid
+2159:                 strokeDasharray="3 3"
+2160:                 stroke="rgba(255,255,255,.06)"
+2161:               />
+2162: 
+2163:               <XAxis
+2164:                 dataKey="category"
+2165:                 tick={{
+2166:                   fill:
+2167:                     "rgba(255,255,255,.35)",
+2168:                   fontSize: 11,
+2169:                 }}
+2170:               />
+2171: 
+2172:               <YAxis
+2173:                 tick={{
+2174:                   fill:
+2175:                     "rgba(255,255,255,.35)",
+2176:                   fontSize: 11,
+2177:                 }}
+2178:               />
+2179: 
+2180:               <Tooltip />
+2181: 
+2182:               <Legend />
+2183: 
+2184:               {activeSeries.map(
+2185:                 (
+2186:                   series,
+2187:                   index
+2188:                 ) => (
+2189:                   <Area
+2190:                     key={
+2191:                       series.id
+2192:                     }
+2193:                     type="monotone"
+2194:                     dataKey={
+2195:                       series.id
+2196:                     }
+2197:                     name={
+2198:                       series.name
+2199:                     }
+2200:                     stroke={
+2201:                       SERIES_COLORS[
+2202:                         index %
+2203:                           SERIES_COLORS.length
+2204:                       ]
+2205:                     }
+2206:                     fill={
+2207:                       SERIES_COLORS[
+2208:                         index %
+2209:                           SERIES_COLORS.length
+2210:                       ]
+2211:                     }
+2212:                     fillOpacity={
+2213:                       0.12
+2214:                     }
+2215:                     strokeWidth={
+2216:                       3
+2217:                     }
+2218:                   />
+2219:                 )
+2220:               )}
+2221:             </AreaChart>
+2222:           </ResponsiveContainer>
+2223:         );
+2224:       }
+2225: 
+2226:       return (
+2227:         <ResponsiveContainer
+2228:           width="100%"
+2229:           height="100%"
+2230:         >
+2231:           <BarChart
+2232:             data={
+2233:               chartData
+2234:             }
+2235:             margin={{
+2236:               top: 15,
+2237:               right: 20,
+2238:               left: 5,
+2239:               bottom: 10,
+2240:             }}
+2241:           >
+2242:             <CartesianGrid
+2243:               strokeDasharray="3 3"
+2244:               stroke="rgba(255,255,255,.06)"
+2245:             />
+2246: 
+2247:             <XAxis
+2248:               dataKey="category"
+2249:               tick={{
+2250:                 fill:
+2251:                   "rgba(255,255,255,.35)",
+2252:                 fontSize: 11,
+2253:               }}
+2254:             />
+2255: 
+2256:             <YAxis
+2257:               tick={{
+2258:                 fill:
+2259:                   "rgba(255,255,255,.35)",
+2260:                 fontSize: 11,
+2261:               }}
+2262:             />
+2263: 
+2264:             <Tooltip />
+2265: 
+2266:             <Legend />
+2267: 
+2268:             {activeSeries.map(
+2269:               (
+2270:                 series,
+2271:                 index
+2272:               ) => (
+2273:                 <Bar
+2274:                   key={
+2275:                     series.id
+2276:                   }
+2277:                   dataKey={
+2278:                     series.id
+2279:                   }
+2280:                   name={
+2281:                     series.name
+2282:                   }
+2283:                   fill={
+2284:                     SERIES_COLORS[
+2285:                       index %
+2286:                         SERIES_COLORS.length
+2287:                     ]
+2288:                   }
+2289:                   radius={[
+2290:                     6,
+2291:                     6,
+2292:                     0,
+2293:                     0,
+2294:                   ]}
+2295:                 />
+2296:               )
+2297:             )}
+2298:           </BarChart>
+2299:         </ResponsiveContainer>
+2300:       );
+2301:     };
+2302: 
+2303:   /* ==========================================================
+2304:      UI
+2305:      ========================================================== */
+2306: 
+2307:   return (
+2308:     <main className="min-h-screen bg-[#06100c] text-white">
+2309:       {/* HEADER */}
+2310: 
+2311:       <header className="sticky top-0 z-50 border-b border-white/[0.06] bg-[#06100c]/90 backdrop-blur-xl">
+2312:         <div className="mx-auto flex h-16 max-w-[1500px] items-center justify-between px-6">
+2313:           <div className="flex items-center gap-3">
+2314:             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-300 text-[#06100c]">
+2315:               <Layers3 size={18} />
+2316:             </div>
+2317: 
+2318:             <div>
+2319:               <div className="text-sm font-semibold">
+2320:                 DECODE
+2321:               </div>
+2322: 
+2323:               <div className="text-[9px] uppercase tracking-[0.24em] text-white/30">
+2324:                 Document Intelligence
+2325:               </div>
+2326:             </div>
+2327:           </div>
+2328: 
+2329:           <div className="hidden items-center gap-3 md:flex">
+2330:             <div className="flex items-center gap-2 rounded-full border border-emerald-300/10 bg-emerald-300/[0.04] px-3 py-1.5 text-[10px] text-emerald-200/70">
+2331:               <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+2332:               {isUploading
+2333:                 ? "Processing"
+2334:                 : "Engine operational"}
+2335:             </div>
+2336: 
+2337:             {documentId && (
+2338:               <span className="text-[10px] text-white/25">
+2339:                 Live DECODE Pipeline
+2340:               </span>
+2341:             )}
+2342:           </div>
+2343: 
+2344:           <button
+2345:             onClick={
+2346:               resetWorkspace
+2347:             }
+2348:             disabled={
+2349:               isUploading
+2350:             }
+2351:             className="flex items-center gap-2 rounded-lg border border-white/[0.07] px-3 py-2 text-xs text-white/50 hover:text-white disabled:opacity-30"
+2352:           >
+2353:             <RefreshCw
+2354:               size={13}
+2355:             />
+2356:             Reset
+2357:           </button>
+2358:         </div>
+2359:       </header>
+2360: 
+2361:       <div className="mx-auto max-w-[1500px] px-6 py-6">
+2362:         {/* HERO */}
+2363: 
+2364:         <section className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0a1a13] p-7 md:p-8">
+2365:           <div
+2366:             className="pointer-events-none absolute inset-0 opacity-40"
+2367:             style={{
+2368:               backgroundImage:
+2369:                 "linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px)",
+2370:               backgroundSize:
+2371:                 "24px 24px",
+2372:             }}
+2373:           />
+2374: 
+2375:           <div className="relative">
+2376:             <div className="mb-5 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300">
+2377:               <Sparkles
+2378:                 size={13}
+2379:               />
+2380:               Live intelligence workspace
+2381:             </div>
+2382: 
+2383:             <div className="flex flex-col justify-between gap-8 lg:flex-row lg:items-end">
+2384:               <div className="max-w-2xl">
+2385:                 <h1 className="text-4xl font-semibold leading-[1.02] tracking-[-0.04em] md:text-5xl">
+2386:                   From document chaos to{" "}
+2387:                   <span className="text-emerald-300">
+2388:                     decision-ready intelligence.
+2389:                   </span>
+2390:                 </h1>
+2391: 
+2392:                 <p className="mt-4 max-w-xl text-sm leading-6 text-white/45">
+2393:                   Upload a real PDF and DECODE
+2394:                   detects, extracts, reconstructs
+2395:                   and turns its visual information
+2396:                   into editable canonical data.
+2397:                 </p>
+2398: 
+2399:                 <div className="mt-5 flex flex-wrap gap-2">
+2400:                   <Badge
+2401:                     icon={
+2402:                       <ShieldCheck
+2403:                         size={12}
+2404:                       />
+2405:                     }
+2406:                     text="Real extracted data"
+2407:                   />
+2408: 
+2409:                   <Badge
+2410:                     icon={
+2411:                       <WandSparkles
+2412:                         size={12}
+2413:                       />
+2414:                     }
+2415:                     text="Editable canonical data"
+2416:                   />
+2417: 
+2418:                   <Badge
+2419:                     icon={
+2420:                       <Database
+2421:                         size={12}
+2422:                       />
+2423:                     }
+2424:                     text="Backend connected"
+2425:                   />
+2426:                 </div>
+2427:               </div>
+2428: 
+2429:               <div className="min-w-[220px] rounded-2xl border border-white/[0.07] bg-black/10 p-4">
+2430:                 <div className="text-[9px] uppercase tracking-[0.2em] text-white/30">
+2431:                   Extraction confidence
+2432:                 </div>
+2433: 
+2434:                 <div className="mt-3 text-3xl font-medium">
+2435:                   {metrics.confidence ===
+2436:                   null
+2437:                     ? "ù"
+2438:                     : metrics.confidence.toFixed(
+2439:                         1
+2440:                       )}
+2441: 
+2442:                   <span className="ml-1 text-sm text-emerald-300">
+2443:                     {metrics.confidence ===
+2444:                     null
+2445:                       ? ""
+2446:                       : "%"}
+2447:                   </span>
+2448:                 </div>
+2449: 
+2450:                 <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+2451:                   <div
+2452:                     className="h-full rounded-full bg-emerald-300 transition-all"
+2453:                     style={{
+2454:                       width: `${Math.min(
+2455:                         100,
+2456:                         Math.max(
+2457:                           0,
+2458:                           metrics.confidence ??
+2459:                             0
+2460:                         )
+2461:                       )}%`,
+2462:                     }}
+2463:                   />
+2464:                 </div>
+2465:               </div>
+2466:             </div>
+2467:           </div>
+2468:         </section>
+2469: 
+2470:         {/* SOURCE */}
+2471: 
+2472:         <section className="mt-5">
+2473:           <div className="flex flex-col gap-3 sm:flex-row">
+2474:             <div className="flex flex-1 items-center gap-4 rounded-xl border border-white/[0.07] bg-[#091810] px-5 py-4">
+2475:               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-400/10 text-red-300">
+2476:                 <FileText
+2477:                   size={17}
+2478:                 />
+2479:               </div>
+2480: 
+2481:               <div className="min-w-0 flex-1">
+2482:                 <div className="text-[9px] uppercase tracking-[0.2em] text-white/30">
+2483:                   Source document
+2484:                 </div>
+2485: 
+2486:                 <div className="mt-1 truncate text-sm text-white/80">
+2487:                   {fileName}
+2488:                 </div>
+2489:               </div>
+2490: 
+2491:               {documentId && (
+2492:                 <div className="hidden items-center gap-1.5 rounded-md bg-emerald-300/10 px-2 py-1 text-[10px] text-emerald-300 sm:flex">
+2493:                   <Check
+2494:                     size={11}
+2495:                   />
+2496:                   Connected
+2497:                 </div>
+2498:               )}
+2499:             </div>
+2500: 
+2501:             <button
+2502:               type="button"
+2503:               onClick={
+2504:                 triggerFilePicker
+2505:               }
+2506:               disabled={
+2507:                 isUploading
+2508:               }
+2509:               className="group flex items-center justify-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-300/[0.04] px-5 py-4 text-sm font-medium text-emerald-300 hover:bg-emerald-300/[0.08] disabled:opacity-50"
+2510:             >
+2511:               {isUploading ? (
+2512:                 <Loader2
+2513:                   size={16}
+2514:                   className="animate-spin"
+2515:                 />
+2516:               ) : (
+2517:                 <Upload
+2518:                   size={16}
+2519:                 />
+2520:               )}
+2521: 
+2522:               {isUploading
+2523:                 ? "Processing..."
+2524:                 : "Replace PDF"}
+2525:             </button>
+2526: 
+2527:             <input
+2528:               ref={
+2529:                 fileInputRef
+2530:               }
+2531:               type="file"
+2532:               accept="application/pdf,.pdf"
+2533:               onChange={
+2534:                 handleFileSelection
+2535:               }
+2536:               className="hidden"
+2537:             />
+2538:           </div>
+2539:         </section>
+2540: 
+2541:         {/* STATUS */}
+2542: 
+2543:         {(isUploading ||
+2544:           error ||
+2545:           message) && (
+2546:           <section className="mt-4">
+2547:             {isUploading && (
+2548:               <div className="overflow-hidden rounded-xl border border-emerald-300/10 bg-[#091810]">
+2549:                 <div className="flex items-center gap-3 px-4 py-3">
+2550:                   <Loader2
+2551:                     size={16}
+2552:                     className="animate-spin text-emerald-300"
+2553:                   />
+2554: 
+2555:                   <div className="flex-1">
+2556:                     <div className="text-xs font-medium text-white/80">
+2557:                       {
+2558:                         processingStage
+2559:                       }
+2560:                     </div>
+2561: 
+2562:                     <div className="mt-1 text-[10px] text-white/35">
+2563:                       DECODE is processing the
+2564:                       document and rebuilding
+2565:                       its visual intelligence.
+2566:                     </div>
+2567:                   </div>
+2568: 
+2569:                   <span className="text-xs tabular-nums text-emerald-300">
+2570:                     {
+2571:                       uploadProgress
+2572:                     }
+2573:                     %
+2574:                   </span>
+2575:                 </div>
+2576: 
+2577:                 <div className="h-1 bg-white/[0.04]">
+2578:                   <div
+2579:                     className="h-full bg-emerald-300 transition-all"
+2580:                     style={{
+2581:                       width: `${uploadProgress}%`,
+2582:                     }}
+2583:                   />
+2584:                 </div>
+2585:               </div>
+2586:             )}
+2587: 
+2588:             {error && (
+2589:               <div className="flex items-start gap-3 rounded-xl border border-red-300/10 bg-red-400/[0.04] px-4 py-3 text-sm text-red-200">
+2590:                 <AlertCircle
+2591:                   size={16}
+2592:                   className="mt-0.5"
+2593:                 />
+2594: 
+2595:                 <div className="flex-1">
+2596:                   <div className="font-medium">
+2597:                     Extraction failed
+2598:                   </div>
+2599: 
+2600:                   <div className="mt-1 text-xs text-red-200/60">
+2601:                     {error}
+2602:                   </div>
+2603:                 </div>
+2604: 
+2605:                 <button
+2606:                   onClick={() =>
+2607:                     setError(
+2608:                       null
+2609:                     )
+2610:                   }
+2611:                 >
+2612:                   <X
+2613:                     size={15}
+2614:                   />
+2615:                 </button>
+2616:               </div>
+2617:             )}
+2618: 
+2619:             {message && (
+2620:               <div className="flex items-center gap-3 rounded-xl border border-emerald-300/10 bg-emerald-300/[0.04] px-4 py-3 text-sm text-emerald-200">
+2621:                 <Check
+2622:                   size={16}
+2623:                 />
+2624:                 {message}
+2625:               </div>
+2626:             )}
+2627:           </section>
+2628:         )}
+2629: 
+2630:         {/* EXTRACTED ARTIFACTS */}
+2631: 
+2632:         {charts.length > 0 && (
+2633:           <section className="mt-5 overflow-hidden rounded-2xl border border-white/[0.07] bg-[#091810]">
+2634:             <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+2635:               <div>
+2636:                 <div className="flex items-center gap-2 text-sm font-semibold">
+2637:                   <ScanLine
+2638:                     size={14}
+2639:                     className="text-emerald-300"
+2640:                   />
+2641:                   Extracted artifacts
+2642:                 </div>
+2643: 
+2644:                 <div className="mt-1 text-[10px] text-white/30">
+2645:                   {charts.length} chart
+2646:                   {charts.length ===
+2647:                   1
+2648:                     ? ""
+2649:                     : "s"}{" "}
+2650:                   detected from the uploaded PDF
+2651:                 </div>
+2652:               </div>
+2653: 
+2654:               <div className="text-[10px] text-white/25">
+2655:                 Artifact{" "}
+2656:                 {Math.max(
+2657:                   1,
+2658:                   charts.findIndex(
+2659:                     (chart) =>
+2660:                       chart.id ===
+2661:                       selectedChartId
+2662:                   ) + 1
+2663:                 )}{" "}
+2664:                 /{" "}
+2665:                 {charts.length}
+2666:               </div>
+2667:             </div>
+2668: 
+2669:             <div className="flex gap-3 overflow-x-auto p-4">
+2670:               {charts.map(
+2671:                 (
+2672:                   chart,
+2673:                   index
+2674:                 ) => {
+2675:                   const active =
+2676:                     chart.id ===
+2677:                     selectedChartId;
+2678: 
+2679:                   const valid =
+2680:                     chart.categories
+2681:                       .length >
+2682:                       0 &&
+2683:                     chart.series
+2684:                       .length >
+2685:                       0;
+2686: 
+2687:                   return (
+2688:                     <button
+2689:                       key={
+2690:                         chart.id
+2691:                       }
+2692:                       onClick={() =>
+2693:                         selectChart(
+2694:                           chart
+2695:                         )
+2696:                       }
+2697:                       className={`min-w-[180px] rounded-xl border p-4 text-left transition ${
+2698:                         active
+2699:                           ? "border-emerald-300/30 bg-emerald-300/[0.07]"
+2700:                           : "border-white/[0.06] bg-white/[0.015] hover:border-white/[0.12]"
+2701:                       }`}
+2702:                     >
+2703:                       <div className="flex items-center justify-between">
+2704:                         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-300/[0.08] text-emerald-300">
+2705:                           <BarChart3
+2706:                             size={14}
+2707:                           />
+2708:                         </div>
+2709: 
+2710:                         <span className="text-[9px] text-white/25">
+2711:                           #{index +
+2712:                             1}
+2713:                         </span>
+2714:                       </div>
+2715: 
+2716:                       <div className="mt-3 truncate text-xs font-medium text-white/75">
+2717:                         {
+2718:                           chart.title
+2719:                         }
+2720:                       </div>
+2721: 
+2722:                       <div className="mt-2 text-[9px] uppercase tracking-[0.15em] text-white/25">
+2723:                         {
+2724:                           chart.chartType
+2725:                         }
+2726:                       </div>
+2727: 
+2728:                       <div className="mt-3 flex items-center justify-between text-[9px]">
+2729:                         <span className="text-white/30">
+2730:                           {
+2731:                             chart
+2732:                               .categories
+2733:                               .length
+2734:                           }{" "}
+2735:                           categories
+2736:                         </span>
+2737: 
+2738:                         <span
+2739:                           className={
+2740:                             valid
+2741:                               ? "text-emerald-300"
+2742:                               : "text-amber-300"
+2743:                           }
+2744:                         >
+2745:                           {valid
+2746:                             ? "Ready"
+2747:                             : "No data"}
+2748:                         </span>
+2749:                       </div>
+2750:                     </button>
+2751:                   );
+2752:                 }
+2753:               )}
+2754:             </div>
+2755:           </section>
+2756:         )}
+2757: 
+2758:         {/* METRICS */}
+2759: 
+2760:         <section className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+2761:           <MetricCard
+2762:             icon={
+2763:               <Layers3
+2764:                 size={15}
+2765:               />
+2766:             }
+2767:             label="Charts detected"
+2768:             value={String(
+2769:               metrics.artifacts
+2770:             )}
+2771:             sub="From real backend extraction"
+2772:           />
+2773: 
+2774:           <MetricCard
+2775:             icon={
+2776:               <FileChartColumn
+2777:                 size={15}
+2778:               />
+2779:             }
+2780:             label="Categories"
+2781:             value={String(
+2782:               metrics.categories
+2783:             )}
+2784:             sub={
+2785:               selectedChart
+2786:                 ? "Current extracted chart"
+2787:                 : "No chart selected"
+2788:             }
+2789:           />
+2790: 
+2791:           <MetricCard
+2792:             icon={
+2793:               <Activity
+2794:                 size={15}
+2795:               />
+2796:             }
+2797:             label="Data points"
+2798:             value={String(
+2799:               metrics.dataPoints
+2800:             )}
+2801:             sub={
+2802:               activeSeries.length
+2803:                 ? `${activeSeries.length} extracted series`
+2804:                 : "Awaiting extraction"
+2805:             }
+2806:           />
+2807: 
+2808:           <MetricCard
+2809:             icon={
+2810:               <ShieldCheck
+2811:                 size={15}
+2812:               />
+2813:             }
+2814:             label="Confidence"
+2815:             value={
+2816:               metrics.confidence ===
+2817:               null
+2818:                 ? "ù"
+2819:                 : `${metrics.confidence.toFixed(
+2820:                     1
+2821:                   )}%`
+2822:             }
+2823:             sub="Backend extraction confidence"
+2824:           />
+2825:         </section>
+2826: 
+2827:         {/* MAIN WORKSPACE */}
+2828: 
+2829:         <section className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_270px]">
+2830:           {/* CHART */}
+2831: 
+2832:           <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#091810]">
+2833:             <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+2834:               <div>
+2835:                 <div className="flex items-center gap-2 text-sm font-semibold">
+2836:                   <span className="h-2 w-2 rounded-full bg-emerald-300" />
+2837: 
+2838:                   {selectedChart
+2839:                     ? selectedChart.title
+2840:                     : "Extracted chart preview"}
+2841:                 </div>
+2842: 
+2843:                 <div className="mt-1 text-[10px] text-white/30">
+2844:                   {selectedChart
+2845:                     ? `Canonical reconstruction ╖ ${
+2846:                         selectedChart.chartType
+2847:                       }`
+2848:                     : "Upload a PDF to begin"}
+2849:                 </div>
+2850:               </div>
+2851: 
+2852:               <div className="flex items-center gap-1">
+2853:                 <button
+2854:                   onClick={
+2855:                     undo
+2856:                   }
+2857:                   disabled={
+2858:                     history.length ===
+2859:                     0
+2860:                   }
+2861:                   className="rounded-lg p-2 text-white/30 hover:bg-white/[0.04] hover:text-white disabled:opacity-20"
+2862:                 >
+2863:                   <RotateCcw
+2864:                     size={14}
+2865:                   />
+2866:                 </button>
+2867: 
+2868:                 <button
+2869:                   onClick={
+2870:                     redo
+2871:                   }
+2872:                   disabled={
+2873:                     future.length ===
+2874:                     0
+2875:                   }
+2876:                   className="rounded-lg p-2 text-white/30 hover:bg-white/[0.04] hover:text-white disabled:opacity-20"
+2877:                 >
+2878:                   <RotateCw
+2879:                     size={14}
+2880:                   />
+2881:                 </button>
+2882:               </div>
+2883:             </div>
+2884: 
+2885:             {/* CHART TYPES */}
+2886: 
+2887:             <div className="flex flex-wrap gap-2 border-b border-white/[0.05] px-5 py-4">
+2888:               {CHART_MODES.map(
+2889:                 (mode) => (
+2890:                   <ChartButton
+2891:                     key={
+2892:                       mode
+2893:                     }
+2894:                     active={
+2895:                       chartMode ===
+2896:                       mode
+2897:                     }
+2898:                     label={
+2899:                       mode
+2900:                         .charAt(
+2901:                           0
+2902:                         )
+2903:                         .toUpperCase() +
+2904:                       mode.slice(
+2905:                         1
+2906:                       )
+2907:                     }
+2908:                     onClick={() =>
+2909:                       setChartMode(
+2910:                         mode
+2911:                       )
+2912:                     }
+2913:                   />
+2914:                 )
+2915:               )}
+2916:             </div>
+2917: 
+2918:             {/* PREVIEW */}
+2919: 
+2920:             <div className="h-[430px] px-5 py-5">
+2921:               {renderChart()}
+2922:             </div>
+2923: 
+2924:             {/* SERIES */}
+2925: 
+2926:             {activeSeries.length >
+2927:               0 && (
+2928:               <div className="flex flex-wrap items-center justify-center gap-2 border-t border-white/[0.05] px-5 py-4">
+2929:                 {activeSeries.map(
+2930:                   (
+2931:                     series,
+2932:                     index
+2933:                   ) => (
+2934:                     <div
+2935:                       key={
+2936:                         series.id
+2937:                       }
+2938:                       className="flex items-center gap-2 rounded-lg border border-white/[0.05] px-3 py-1.5 text-[10px] text-white/50"
+2939:                     >
+2940:                       <span
+2941:                         className="h-2 w-2 rounded-full"
+2942:                         style={{
+2943:                           background:
+2944:                             SERIES_COLORS[
+2945:                               index %
+2946:                                 SERIES_COLORS.length
+2947:                             ],
+2948:                         }}
+2949:                       />
+2950: 
+2951:                       {
+2952:                         series.name
+2953:                       }
+2954:                     </div>
+2955:                   )
+2956:                 )}
+2957:               </div>
+2958:             )}
+2959:           </div>
+2960: 
+2961:           {/* INSPECTOR */}
+2962: 
+2963:           <aside className="space-y-3">
+2964:             <div className="rounded-2xl border border-white/[0.07] bg-[#091810] p-5">
+2965:               <div className="flex items-center justify-between">
+2966:                 <div>
+2967:                   <div className="text-sm font-semibold">
+2968:                     Inspector
+2969:                   </div>
+2970: 
+2971:                   <div className="mt-1 text-[10px] text-white/30">
+2972:                     Real extraction metadata
+2973:                   </div>
+2974:                 </div>
+2975: 
+2976:                 <ChevronDown
+2977:                   size={15}
+2978:                   className="text-white/30"
+2979:                 />
+2980:               </div>
+2981: 
+2982:               <InspectorValue
+2983:                 label="Chart type"
+2984:                 value={
+2985:                   selectedChart
+2986:                     ? chartMode.toUpperCase()
+2987:                     : "ù"
+2988:                 }
+2989:               />
+2990: 
+2991:               <InspectorValue
+2992:                 label="Categories"
+2993:                 value={String(
+2994:                   metrics.categories
+2995:                 )}
+2996:               />
+2997: 
+2998:               <InspectorValue
+2999:                 label="Series"
+3000:                 value={String(
+3001:                   activeSeries.length
+3002:                 )}
+3003:               />
+3004: 
+3005:               <InspectorValue
+3006:                 label="Data points"
+3007:                 value={String(
+3008:                   metrics.dataPoints
+3009:                 )}
+3010:               />
+3011: 
+3012:               <InspectorValue
+3013:                 label="Confidence"
+3014:                 value={
+3015:                   selectedChart?.confidence ===
+3016:                   null ||
+3017:                   selectedChart?.confidence ===
+3018:                     undefined
+3019:                     ? "ù"
+3020:                     : `${selectedChart.confidence.toFixed(
+3021:                         1
+3022:                       )}%`
+3023:                 }
+3024:                 accent
+3025:               />
+3026: 
+3027:               <div className="mt-5 rounded-xl border border-emerald-300/10 bg-emerald-300/[0.025] p-3">
+3028:                 <div className="flex items-center justify-between text-[9px] uppercase tracking-[0.16em] text-white/30">
+3029:                   <span>
+3030:                     Canonical integrity
+3031:                   </span>
+3032: 
+3033:                   <span className="text-emerald-300">
+3034:                     {selectedChart &&
+3035:                     activeSeries.length >
+3036:                       0
+3037:                       ? "Verified"
+3038:                       : "Awaiting data"}
+3039:                   </span>
+3040:                 </div>
+3041: 
+3042:                 <div className="mt-2 h-1 rounded-full bg-white/[0.05]">
+3043:                   <div
+3044:                     className="h-full rounded-full bg-emerald-300 transition-all"
+3045:                     style={{
+3046:                       width:
+3047:                         selectedChart &&
+3048:                         activeSeries.length >
+3049:                           0
+3050:                           ? "100%"
+3051:                           : "0%",
+3052:                     }}
+3053:                   />
+3054:                 </div>
+3055:               </div>
+3056:             </div>
+3057: 
+3058:             <div className="rounded-2xl border border-white/[0.07] bg-[#091810] p-5">
+3059:               <div className="flex items-center gap-2 text-sm font-semibold">
+3060:                 <ScanLine
+3061:                   size={15}
+3062:                   className="text-emerald-300"
+3063:                 />
+3064:                 Pipeline status
+3065:               </div>
+3066: 
+3067:               <div className="mt-4 space-y-4">
+3068:                 <PipelineItem
+3069:                   label="PDF ingestion"
+3070:                   detail={
+3071:                     documentId
+3072:                       ? "Completed"
+3073:                       : "Waiting"
+3074:                   }
+3075:                   done={
+3076:                     Boolean(
+3077:                       documentId
+3078:                     )
+3079:                   }
+3080:                 />
+3081: 
+3082:                 <PipelineItem
+3083:                   label="Artifact detection"
+3084:                   detail={
+3085:                     charts.length
+3086:                       ? `${charts.length} charts detected`
+3087:                       : "Waiting"
+3088:                   }
+3089:                   done={
+3090:                     charts.length >
+3091:                     0
+3092:                   }
+3093:                 />
+3094: 
+3095:                 <PipelineItem
+3096:                   label="Data extraction"
+3097:                   detail={
+3098:                     selectedChart &&
+3099:                     activeSeries.length
+3100:                       ? "Canonical data available"
+3101:                       : "Waiting"
+3102:                   }
+3103:                   done={
+3104:                     Boolean(
+3105:                       selectedChart &&
+3106:                         activeSeries.length
+3107:                     )
+3108:                   }
+3109:                 />
+3110: 
+3111:                 <PipelineItem
+3112:                   label="Visualization"
+3113:                   detail={
+3114:                     selectedChart &&
+3115:                     rows.length
+3116:                       ? "Interactive preview ready"
+3117:                       : "Waiting"
+3118:                   }
+3119:                   done={
+3120:                     Boolean(
+3121:                       selectedChart &&
+3122:                         rows.length
+3123:                     )
+3124:                   }
+3125:                 />
+3126: 
+3127:                 <PipelineItem
+3128:                   label="Editable output"
+3129:                   detail={
+3130:                     selectedChart &&
+3131:                     rows.length
+3132:                       ? "Ready for editing"
+3133:                       : "Waiting"
+3134:                   }
+3135:                   done={
+3136:                     Boolean(
+3137:                       selectedChart &&
+3138:                         rows.length
+3139:                     )
+3140:                   }
+3141:                 />
+3142:               </div>
+3143:             </div>
+3144: 
+3145:             <div className="rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.025] p-5">
+3146:               <div className="flex gap-3">
+3147:                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-300/10 text-emerald-300">
+3148:                   <WandSparkles
+3149:                     size={15}
+3150:                   />
+3151:                 </div>
+3152: 
+3153:                 <div>
+3154:                   <div className="text-xs font-semibold">
+3155:                     Why this matters
+3156:                   </div>
+3157: 
+3158:                   <p className="mt-2 text-[10px] leading-5 text-white/35">
+3159:                     DECODE does not replace
+3160:                     extracted information with
+3161:                     demo values. Every preview is
+3162:                     generated from the selected
+3163:                     artifact returned by the live
+3164:                     pipeline.
+3165:                   </p>
+3166:                 </div>
+3167:               </div>
+3168:             </div>
+3169:           </aside>
+3170:         </section>
+3171: 
+3172:         {/* EDITOR */}
+3173: 
+3174:         <section className="mt-3 overflow-hidden rounded-2xl border border-white/[0.07] bg-[#091810]">
+3175:           <div className="flex flex-col justify-between gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center">
+3176:             <div>
+3177:               <div className="flex items-center gap-2 text-sm font-semibold">
+3178:                 <Table2
+3179:                   size={14}
+3180:                   className="text-emerald-300"
+3181:                 />
+3182:                 Extracted data editor
+3183:               </div>
+3184: 
+3185:               <div className="mt-1 text-[10px] text-white/30">
+3186:                 Edit the actual reconstructed
+3187:                 values and watch the preview
+3188:                 update instantly.
+3189:               </div>
+3190:             </div>
+3191: 
+3192:             <div className="flex flex-wrap gap-2">
+3193:               <button
+3194:                 onClick={
+3195:                   addSeries
+3196:                 }
+3197:                 disabled={
+3198:                   !selectedChart
+3199:                 }
+3200:                 className="flex items-center gap-1.5 rounded-lg border border-emerald-300/15 bg-emerald-300/[0.05] px-3 py-2 text-[11px] text-emerald-300 disabled:opacity-30"
+3201:               >
+3202:                 <Plus
+3203:                   size={13}
+3204:                 />
+3205:                 Add series
+3206:               </button>
+3207: 
+3208:               <button
+3209:                 onClick={
+3210:                   addRow
+3211:                 }
+3212:                 disabled={
+3213:                   !selectedChart
+3214:                 }
+3215:                 className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] px-3 py-2 text-[11px] text-white/50 disabled:opacity-30"
+3216:               >
+3217:                 <Plus
+3218:                   size={13}
+3219:                 />
+3220:                 Add row
+3221:               </button>
+3222:             </div>
+3223:           </div>
+3224: 
+3225:           {rows.length ===
+3226:             0 ||
+3227:           activeSeries.length ===
+3228:             0 ? (
+3229:             <div className="flex min-h-[220px] items-center justify-center px-5">
+3230:               <div className="text-center">
+3231:                 <Table2
+3232:                   size={22}
+3233:                   className="mx-auto text-white/15"
+3234:                 />
+3235: 
+3236:                 <div className="mt-3 text-sm text-white/45">
+3237:                   No extracted data yet
+3238:                 </div>
+3239: 
+3240:                 <div className="mt-1 text-xs text-white/20">
+3241:                   Upload a PDF containing a chart
+3242:                   to populate this editor.
+3243:                 </div>
+3244:               </div>
+3245:             </div>
+3246:           ) : (
+3247:             <>
+3248:               <div className="overflow-x-auto">
+3249:                 <table className="w-full min-w-[720px] text-left">
+3250:                   <thead>
+3251:                     <tr className="border-b border-white/[0.05] text-[9px] uppercase tracking-[0.16em] text-white/25">
+3252:                       <th className="px-5 py-3 font-medium">
+3253:                         Category
+3254:                       </th>
+3255: 
+3256:                       {activeSeries.map(
+3257:                         (
+3258:                           series
+3259:                         ) => (
+3260:                           <th
+3261:                             key={
+3262:                               series.id
+3263:                             }
+3264:                             className="px-5 py-3 font-medium"
+3265:                           >
+3266:                             {
+3267:                               series.name
+3268:                             }
+3269:                           </th>
+3270:                         )
+3271:                       )}
+3272: 
+3273:                       <th className="px-5 py-3 text-right font-medium">
+3274:                         Action
+3275:                       </th>
+3276:                     </tr>
+3277:                   </thead>
+3278: 
+3279:                   <tbody>
+3280:                     {rows.map(
+3281:                       (
+3282:                         row,
+3283:                         rowIndex
+3284:                       ) => (
+3285:                         <tr
+3286:                           key={`${row.category}-${rowIndex}`}
+3287:                           className="border-b border-white/[0.04] hover:bg-white/[0.015]"
+3288:                         >
+3289:                           <td className="px-5 py-3">
+3290:                             <input
+3291:                               value={
+3292:                                 row.category
+3293:                               }
+3294:                               onChange={(
+3295:                                 event
+3296:                               ) =>
+3297:                                 updateCategory(
+3298:                                   rowIndex,
+3299:                                   event
+3300:                                     .target
+3301:                                     .value
+3302:                                 )
+3303:                               }
+3304:                               className="w-full bg-transparent text-xs text-white/80 outline-none"
+3305:                             />
+3306:                           </td>
+3307: 
+3308:                           {activeSeries.map(
+3309:                             (
+3310:                               series
+3311:                             ) => (
+3312:                               <td
+3313:                                 key={
+3314:                                   series.id
+3315:                                 }
+3316:                                 className="px-5 py-3"
+3317:                               >
+3318:                                 <input
+3319:                                   type="number"
+3320:                                   value={
+3321:                                     row
+3322:                                       .values[
+3323:                                       series.id
+3324:                                     ] ??
+3325:                                     0
+3326:                                   }
+3327:                                   onChange={(
+3328:                                     event
+3329:                                   ) =>
+3330:                                     updateCell(
+3331:                                       rowIndex,
+3332:                                       series.id,
+3333:                                       event
+3334:                                         .target
+3335:                                         .value
+3336:                                     )
+3337:                                   }
+3338:                                   className="w-full bg-transparent text-xs text-white/80 outline-none"
+3339:                                 />
+3340:                               </td>
+3341:                             )
+3342:                           )}
+3343: 
+3344:                           <td className="px-5 py-3 text-right">
+3345:                             <button
+3346:                               onClick={() =>
+3347:                                 removeRow(
+3348:                                   rowIndex
+3349:                                 )
+3350:                               }
+3351:                               disabled={
+3352:                                 rows.length <=
+3353:                                 1
+3354:                               }
+3355:                               className="rounded-md p-1.5 text-white/20 hover:bg-red-400/10 hover:text-red-300 disabled:opacity-20"
+3356:                             >
+3357:                               <Trash2
+3358:                                 size={13}
+3359:                               />
+3360:                             </button>
+3361:                           </td>
+3362:                         </tr>
+3363:                       )
+3364:                     )}
+3365:                   </tbody>
+3366:                 </table>
+3367:               </div>
+3368: 
+3369:               <div className="flex flex-wrap gap-2 px-5 py-4">
+3370:                 <button
+3371:                   onClick={
+3372:                     exportCSV
+3373:                   }
+3374:                   className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] px-3 py-2 text-[11px] text-white/45 hover:text-white"
+3375:                 >
+3376:                   <Download
+3377:                     size={13}
+3378:                   />
+3379:                   Export CSV
+3380:                 </button>
+3381: 
+3382:                 <button
+3383:                   onClick={
+3384:                     copyConfig
+3385:                   }
+3386:                   className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] px-3 py-2 text-[11px] text-white/45 hover:text-white"
+3387:                 >
+3388:                   <Copy
+3389:                     size={13}
+3390:                   />
+3391:                   Copy config
+3392:                 </button>
+3393:               </div>
+3394:             </>
+3395:           )}
+3396:         </section>
+3397: 
+3398:         <footer className="flex flex-col justify-between gap-3 px-2 py-8 text-[10px] text-white/20 sm:flex-row">
+3399:           <div className="flex items-center gap-2">
+3400:             <Database
+3401:               size={12}
+3402:             />
+3403:             DECODE ╖ Live document intelligence
+3404:           </div>
+3405: 
+3406:           <div>

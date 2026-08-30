@@ -337,6 +337,96 @@ def rescore_chart_endpoint(chart_id):
     return jsonify(result)
 
 
+# ─── DECODE-VISION Specialist Endpoints ─────────────────────────────────────
+
+@api_bp.route("/charts/<chart_id>/decode-vision", methods=["POST"])
+def chart_decode_vision(chart_id):
+    """
+    Run DECODE-VISION specialist extraction on a specific chart.
+    Returns the exact JSON schema defined in the DECODE-VISION specification.
+    """
+    chart = get_chart_full(chart_id)
+    if not chart:
+        return jsonify({"error": "Chart not found"}), 404
+
+    # Determine image source
+    img_data = None
+    if chart.get("original_image_path"):
+        local_path = BASE_DIR / chart["original_image_path"].lstrip("/")
+        if local_path.exists():
+            img_data = str(local_path)
+    if not img_data and chart.get("original_image_base64"):
+        img_data = chart["original_image_base64"]
+
+    if not img_data:
+        return jsonify({"error": "No image data available for this chart."}), 400
+
+    from services.llm_service import get_llm, decode_vision_to_pipeline_format
+    llm = get_llm()
+    dv_result = llm.extract_with_decode_vision(
+        img_data,
+        context={"chart_type": chart.get("chart_type", "chart")}
+    )
+
+    # Update extraction record in Firestore
+    db = get_db()
+    extractions = list(db.collection("extractions").where("chart_id", "==", chart_id).stream())
+    if extractions:
+        ext_doc = extractions[0]
+        pipe_format = decode_vision_to_pipeline_format(dv_result)
+        db.collection("extractions").document(ext_doc.id).update({
+            "decode_vision": dv_result,
+            "series": pipe_format["series"],
+            "axis_labels": pipe_format["axis_labels"],
+            "legend": pipe_format["legend"],
+            "title": pipe_format["title"],
+        })
+
+    return jsonify({
+        "status": "ok",
+        "chart_id": chart_id,
+        "decode_vision": dv_result
+    })
+
+
+@api_bp.route("/extract/decode-vision", methods=["POST"])
+def standalone_decode_vision():
+    """
+    Direct standalone endpoint for DECODE-VISION chart extraction.
+    Accepts:
+      - Multipart file upload: 'file' or 'image'
+      - JSON body: {"image_base64": "...", "hint": "..."}
+    Returns strictly the DECODE-VISION JSON schema object.
+    """
+    from services.llm_service import get_llm
+    llm = get_llm()
+
+    image_data = None
+    context = {}
+
+    if "file" in request.files:
+        file = request.files["file"]
+        image_data = file.read()
+    elif "image" in request.files:
+        file = request.files["image"]
+        image_data = file.read()
+    elif request.is_json:
+        data = request.get_json(silent=True) or {}
+        image_data = data.get("image_base64") or data.get("image")
+        if data.get("hint"):
+            context["hint"] = data["hint"]
+
+    if not image_data:
+        return jsonify({"error": "No image provided. Pass a file or 'image_base64' in JSON."}), 400
+
+    try:
+        dv_result = llm.extract_with_decode_vision(image_data, context=context)
+        return jsonify(dv_result)
+    except Exception as e:
+        logger.error("standalone_decode_vision failed: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
 # ─── Export endpoints ─────────────────────────────────────────────────────────
 
 @api_bp.route("/exports/<chart_id>/png", methods=["GET"])
@@ -618,3 +708,43 @@ def detect_figures_route():
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     figures = detect_figures(img)
     return jsonify({"figures": figures, "count": len(figures)})
+
+
+# ============================================================================
+# DECODE DEMO / PRODUCT API
+# ============================================================================
+
+from core.demo.service import DemoService
+
+
+_demo_service = DemoService()
+
+
+@api_bp.route("/demo/health", methods=["GET"])
+def demo_health():
+    """
+    Public frontend health endpoint.
+    """
+    return jsonify(
+        _demo_service.health()
+    )
+
+
+@api_bp.route("/demo/capabilities", methods=["GET"])
+def demo_capabilities():
+    """
+    Returns all visualization capabilities.
+    """
+    return jsonify(
+        _demo_service.capabilities()
+    )
+
+
+@api_bp.route("/demo/product", methods=["GET"])
+def demo_product():
+    """
+    Returns product metadata used by the frontend.
+    """
+    return jsonify(
+        _demo_service.product_info()
+    )

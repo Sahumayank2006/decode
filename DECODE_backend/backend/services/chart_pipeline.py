@@ -30,15 +30,32 @@ from core.chart_detector import (
 )
 from core.visual_extractor import VisualExtractor
 from core.chart_extractor import extract_chart_data
+from core.extraction_normalizer import (
+    normalize_extraction_result,
+)
+from core.reconstruction import (
+    CanonicalReconstructionService,
+    VisualizationSpec,
+)
+from core.canonical_data_model import (
+    CanonicalDataset,
+)
 from core.chart_reconstructor import (
     reconstruct_chart, render_chart_image, generate_recharts_config,
     save_chart_export, PALETTES,
 )
 from services.chart_sense_service import analyze_chart_with_sense
 from core.compliance_scorer import score_compliance
-from services.llm_service import get_llm
+from services.llm_service import get_llm, decode_vision_to_pipeline_format
+from core.visualization.service import UniversalVisualizationService
 
 logger = logging.getLogger("decode.pipeline")
+
+canonical_reconstruction_service = (
+    CanonicalReconstructionService()
+)
+
+universal_vis_service = UniversalVisualizationService()
 
 # ── Firestore collection names ───────────────────────────────────────────────
 COL_DOCUMENTS         = "documents"
@@ -183,22 +200,15 @@ def _stage_detect(
         fpath = CHARTS_DIR / fname
         img_url = _save_image(cropped, fpath)
 
-        # Call Chart-Sense for further analysis
+        # Call Chart-Sense for further analysis properties
         sense_props = {}
         if det["type"] in ["chart", "figure"]:
-            # Absolute path needed for analyze_chart
-            abs_img_path = str(fpath.absolute())
-            sense_results = analyze_chart_with_sense(abs_img_path)
-            
-            sense_type = sense_results.get("chart_type", "other_chart")
-            # Override figure to chart if chart-sense detects a chart structure
-            if sense_type != "other_chart" and sense_type != "unknown":
-                # Convert 'bar' to 'bar_chart' etc.
-                if not sense_type.endswith("_chart") and not sense_type.endswith("_plot"):
-                    sense_type = f"{sense_type}_chart"
-                det["type"] = sense_type
-                
-            sense_props = sense_results.get("properties", {})
+            try:
+                abs_img_path = str(fpath.absolute())
+                sense_results = analyze_chart_with_sense(abs_img_path)
+                sense_props = sense_results.get("properties", {})
+            except Exception as e:
+                logger.debug("Chart sense analysis skipped: %s", e)
 
         chart_record = {
             "id": chart_id,
@@ -212,14 +222,13 @@ def _stage_detect(
             "original_image_path": img_url,
             "original_image_base64": _img_to_base64(cropped),
             "chart_sense_properties": sense_props,
+            "table_data": det.get("table_data"),
             "created_at": _ts(),
         }
 
         db.collection(COL_CHARTS).document(chart_id).set(chart_record)
         chart_record["_cropped_image"] = cropped  # keep in memory
         all_charts.append(chart_record)
-
-
 
     _log_event(
         doc_id, "detecting",
@@ -246,30 +255,115 @@ def _stage_extract(doc_id: str, charts: list[dict]) -> list[dict]:
         if cropped is None:
             continue
 
+        dv_payload = None
+        extraction_method_used = "decode_chart_extractor"
+
         try:
-            extraction = extract_chart_data(cropped, chart["chart_type"])
-        except Exception as e:
-            logger.error("Extraction failed for chart %s: %s", chart_id, e)
-            extraction = {
-                "series": [], "axis_labels": {},
-                "legend": [], "title": "",
-                "raw_ocr_text": "", "extraction_confidence": 0.0,
-            }
+            # 1. Attempt precision DECODE-VISION model extraction
+            llm = get_llm()
+            dv_result = llm.extract_with_decode_vision(
+                cropped,
+                context={"chart_type": chart.get("chart_type", "chart")}
+            )
+            if dv_result and (dv_result.get("extracted_data") or {}).get("series"):
+                extraction = decode_vision_to_pipeline_format(dv_result)
+                dv_payload = dv_result
+                extraction_method_used = "decode_vision_specialist"
+            else:
+                extraction = extract_chart_data(
+                    cropped,
+                    chart["chart_type"],
+                    raw_table_data=chart.get("table_data"),
+                )
+        except Exception as vision_err:
+            logger.info("DECODE-VISION falling back to standard extractor: %s", vision_err)
+            try:
+                extraction = extract_chart_data(
+                    cropped,
+                    chart["chart_type"],
+                    raw_table_data=chart.get("table_data"),
+                )
+            except Exception as e:
+                logger.error("Extraction failed for chart %s: %s", chart_id, e)
+                extraction = {
+                    "series": [],
+                    "axis_labels": {},
+                    "legend": [],
+                    "title": "",
+                    "raw_ocr_text": "",
+                    "extraction_confidence": 0.0,
+                }
+                extraction_method_used = "decode_chart_extractor_failed"
+
+        try:
+            # Update chart record if resolved type changed
+            if extraction.get("resolved_chart_type"):
+                chart["chart_type"] = extraction["resolved_chart_type"]
+
+            canonical_dataset = (
+                normalize_extraction_result(
+                    extraction,
+                    detected_type=chart.get(
+                        "chart_type",
+                        "unknown",
+                    ),
+                    extraction_method=extraction_method_used,
+                    metadata={
+                        "chart_id": chart_id,
+                        "document_id": doc_id,
+                        "decode_vision_used": (dv_payload is not None),
+                    },
+                )
+            )
+        except Exception as norm_err:
+            logger.error("Normalization error for chart %s: %s", chart_id, norm_err)
+            canonical_dataset = normalize_extraction_result(
+                {
+                    "series": [],
+                    "axis_labels": {},
+                    "legend": [],
+                    "title": "",
+                    "raw_ocr_text": "",
+                    "extraction_confidence": 0.0,
+                },
+                detected_type=chart.get("chart_type", "unknown"),
+                extraction_method="normalization_fallback",
+                metadata={"chart_id": chart_id, "document_id": doc_id, "error": str(norm_err)},
+            )
 
         ext_id = str(uuid.uuid4())
         ext_record = {
             "id": ext_id,
             "chart_id": chart_id,
-            "series": extraction["series"],
-            "axis_labels": extraction["axis_labels"],
-            "legend": extraction["legend"],
+            "series": extraction.get("series", []),
+            "axis_labels": extraction.get("axis_labels", {}),
+            "legend": extraction.get("legend", []),
             "raw_ocr_text": extraction.get("raw_ocr_text", ""),
-            "extraction_confidence": extraction["extraction_confidence"],
+            "extraction_confidence": extraction.get("extraction_confidence", 0.8),
             "title": extraction.get("title", ""),
+            "decode_vision": dv_payload,
+            "canonical_data": canonical_dataset.to_dict(),
             "created_at": _ts(),
         }
 
-        db.collection(COL_EXTRACTIONS).document(ext_id).set(ext_record)
+        if not isinstance(
+            ext_record.get(
+                "canonical_data"
+            ),
+            dict,
+        ):
+            raise ValueError(
+                "Canonical extraction data "
+                "must be a dictionary."
+            )
+
+        db.collection(
+            COL_EXTRACTIONS
+        ).document(
+            ext_id
+        ).set(
+            ext_record
+        )
         ext_record["_chart"] = chart  # back-reference
         extractions.append(ext_record)
 
@@ -283,6 +377,103 @@ def _stage_extract(doc_id: str, charts: list[dict]) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 4: Reconstruct
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _reconstruct_canonical_chart(
+    ext: dict,
+    chart: dict,
+    export_subdir: Path,
+):
+    """
+    Reconstruct a chart from canonical extraction data.
+
+    This is the new reconstruction path.
+
+    It intentionally does not modify the canonical data.
+    The canonical dataset is the source of truth; the
+    VisualizationSpec controls presentation.
+    """
+
+    canonical_payload = ext.get(
+        "canonical_data"
+    )
+
+    if not isinstance(
+        canonical_payload,
+        dict,
+    ):
+        raise ValueError(
+            "Missing or invalid canonical_data."
+        )
+
+    dataset = (
+        CanonicalDataset.from_dict(
+            canonical_payload
+        )
+    )
+
+    raw_type = str(
+        chart.get(
+            "chart_type",
+            dataset.detected_type
+            if dataset.detected_type != "unknown"
+            else "bar",
+        )
+    ).lower()
+
+    if raw_type in ["chart", "unknown", "other", "figure", "diagram", "process_diagram", "flowchart"]:
+        chart_type = "bar" if dataset.detected_type in ["unknown", "chart", "figure", "diagram"] else dataset.detected_type
+    elif "pie" in raw_type:
+        chart_type = "pie"
+    elif "donut" in raw_type:
+        chart_type = "donut"
+    elif "line" in raw_type:
+        chart_type = "line"
+    elif "area" in raw_type:
+        chart_type = "area"
+    elif "radar" in raw_type:
+        chart_type = "radar"
+    elif "scatter" in raw_type:
+        chart_type = "scatter"
+    elif "table" in raw_type:
+        chart_type = "table"
+    else:
+        chart_type = "bar"
+
+    # Use UniversalVisualizationService to render canonical payload
+    render_result = universal_vis_service.render(
+        payload=canonical_payload,
+        visualization_type=chart_type,
+        export_dir=str(export_subdir),
+        export_prefix="canonical",
+        options={
+            "palette_name": "professional",
+            "title": dataset.title or chart.get("title", ""),
+            "x_axis_label": dataset.x_axis_label or chart.get("x_axis_label", ""),
+            "y_axis_label": dataset.y_axis_label or chart.get("y_axis_label", "")
+        }
+    )
+    result = render_result["result"]
+
+    # Get recommendations
+    recs = universal_vis_service.recommend(canonical_payload)
+    alt_type = chart_type
+    alt_reason = "Reconstructed from canonical extracted data."
+    if recs:
+        alt_type = getattr(recs[0], "chart_type", chart_type)
+        alt_reason = getattr(recs[0], "reason", alt_reason)
+
+    return {
+        "chart_type": result.get("chart_type", chart_type),
+        "chart_config": result.get("chart_config", {}),
+        "image_base64": "",
+        "export_paths": {
+            "svg": result.get("svg_path", ""),
+            "png": result.get("png_path", ""),
+        },
+        "recommended_alt_type": alt_type,
+        "recommendation_reason": alt_reason,
+        "renderer": "canonical",
+    }
 
 def _stage_reconstruct(doc_id: str, extractions: list[dict]) -> list[dict]:
     """Reconstruct charts from extracted data."""
@@ -301,22 +492,115 @@ def _stage_reconstruct(doc_id: str, extractions: list[dict]) -> list[dict]:
         export_subdir.mkdir(parents=True, exist_ok=True)
 
         try:
-            recon = reconstruct_chart(
-                extraction=ext,
-                chart_type=chart_type,
-                palette_name="default",
-                export_dir=str(export_subdir),
-                export_prefix="chart",
-            )
+
+            # -------------------------------------------------
+            # NEW CANONICAL RECONSTRUCTION PATH
+            # -------------------------------------------------
+
+            if isinstance(
+                ext.get("canonical_data"),
+                dict,
+            ):
+
+                try:
+
+                    recon = _reconstruct_canonical_chart(
+                        ext=ext,
+                        chart=chart,
+                        export_subdir=export_subdir,
+                    )
+
+                    logger.info(
+                        "Canonical reconstruction succeeded "
+                        "for chart %s",
+                        chart_id,
+                    )
+
+                except Exception as canonical_error:
+
+                    logger.warning(
+                        "Canonical reconstruction failed "
+                        "for chart %s: %s. "
+                        "Falling back to legacy renderer.",
+                        chart_id,
+                        canonical_error,
+                    )
+
+                    # -------------------------------------------------
+                    # LEGACY FALLBACK
+                    # -------------------------------------------------
+
+                    recon = reconstruct_chart(
+
+                        extraction=ext,
+
+                        chart_type=chart_type,
+
+                        palette_name="default",
+
+                        export_dir=str(
+                            export_subdir
+                        ),
+
+                        export_prefix="chart",
+                    )
+
+                    recon["renderer"] = "legacy_fallback"
+
+            else:
+
+                # -------------------------------------------------
+                # OLD DATABASE RECORD
+                # -------------------------------------------------
+
+                logger.info(
+                    "No canonical data found for chart %s. "
+                    "Using legacy reconstruction.",
+                    chart_id,
+                )
+
+                recon = reconstruct_chart(
+
+                    extraction=ext,
+
+                    chart_type=chart_type,
+
+                    palette_name="default",
+
+                    export_dir=str(
+                        export_subdir
+                    ),
+
+                    export_prefix="chart",
+                )
+
+                recon["renderer"] = "legacy"
+
         except Exception as e:
-            logger.error("Reconstruction failed for chart %s: %s", chart_id, e)
+
+            logger.error(
+                "Reconstruction failed for chart %s: %s",
+                chart_id,
+                e,
+            )
+
             recon = {
+
                 "chart_type": chart_type,
+
                 "chart_config": {},
+
                 "image_base64": "",
+
                 "export_paths": {},
+
                 "recommended_alt_type": chart_type,
-                "recommendation_reason": "Reconstruction failed.",
+
+                "recommendation_reason": (
+                    "Reconstruction failed."
+                ),
+
+                "renderer": "failed",
             }
 
         # Make export paths URL-friendly
@@ -339,6 +623,10 @@ def _stage_reconstruct(doc_id: str, extractions: list[dict]) -> list[dict]:
             "export_png_path": export_urls.get("png", ""),
             "recommended_alt_type": recon.get("recommended_alt_type", ""),
             "recommendation_reason": recon.get("recommendation_reason", ""),
+            "renderer": recon.get(
+                "renderer",
+                "unknown",
+            ),
             "created_at": _ts(),
             "updated_at": _ts(),
         }
@@ -618,10 +906,6 @@ def reconstruct_single_chart(
 
     ext_data = ext_snaps[-1].to_dict()
 
-    # Override series if user edited data
-    if edited_series is not None:
-        ext_data["series"] = edited_series
-
     # Get chart info
     chart_snap = db.collection(COL_CHARTS).document(chart_id).get()
     chart_data = chart_snap.to_dict() if chart_snap.exists else {}
@@ -630,34 +914,88 @@ def reconstruct_single_chart(
     export_subdir = EXPORT_DIR / chart_id
     export_subdir.mkdir(parents=True, exist_ok=True)
 
-    recon = reconstruct_chart(
-        extraction=ext_data,
-        chart_type=chart_type,
-        palette_name=palette_name,
-        export_dir=str(export_subdir),
-        export_prefix="chart",
-    )
+    # CANONICAL PATH
+    if "canonical_data" in ext_data and ext_data["canonical_data"]:
+        canonical_payload = ext_data["canonical_data"]
+        
+        if edited_series is not None:
+            canonical_payload["series"] = edited_series
+            # Also update extraction so we don't lose it if we rescore later
+            ext_data["canonical_data"]["series"] = edited_series
+            # Save updated extraction
+            db.collection(COL_EXTRACTIONS).document(ext_snaps[-1].id).update({"canonical_data": canonical_payload})
+
+        try:
+            render_result = universal_vis_service.render(
+                payload=canonical_payload,
+                visualization_type=chart_type,
+                export_dir=str(export_subdir),
+                export_prefix="chart",
+                options={
+                    "palette_name": palette_name,
+                }
+            )
+            recon = render_result["result"]
+            
+            # Get recommendations
+            recs = universal_vis_service.recommend(canonical_payload)
+            alt_type = ""
+            alt_reason = ""
+            if recs:
+                for rec in recs:
+                    if rec.visualization_type != chart_type:
+                        alt_type = rec.visualization_type
+                        alt_reason = rec.reason
+                        break
+                        
+        except ValueError as e:
+            return {"error": str(e)}
+
+    # LEGACY FALLBACK PATH
+    else:
+        # Override series if user edited data
+        if edited_series is not None:
+            ext_data["series"] = edited_series
+            db.collection(COL_EXTRACTIONS).document(ext_snaps[-1].id).update({"series": edited_series})
+
+        recon = reconstruct_chart(
+            extraction=ext_data,
+            chart_type=chart_type,
+            palette_name=palette_name,
+            export_dir=str(export_subdir),
+            export_prefix="chart",
+        )
+        alt_type = recon.get("recommended_alt_type", "")
+        alt_reason = recon.get("recommendation_reason", "")
 
     # Save to Firestore
     rec_id = str(uuid.uuid4())
     export_urls = {}
-    for fmt, fpath in recon.get("export_paths", {}).items():
-        try:
-            rel = Path(fpath).relative_to(BASE_DIR / "static")
-            export_urls[fmt] = f"/static/{rel.as_posix()}"
-        except ValueError:
-            export_urls[fmt] = fpath
+    
+    # Handle export paths (Canonical vs Legacy)
+    if "export_paths" in recon:
+        paths = recon["export_paths"]
+    else:
+        paths = {"svg": recon.get("svg_path"), "png": recon.get("png_path")}
+        
+    for fmt, fpath in paths.items():
+        if fpath:
+            try:
+                rel = Path(fpath).relative_to(BASE_DIR / "static")
+                export_urls[fmt] = f"/static/{rel.as_posix()}"
+            except ValueError:
+                export_urls[fmt] = fpath
 
     rec_record = {
         "id": rec_id,
         "chart_id": chart_id,
         "chart_type": chart_type,
-        "chart_config": recon["chart_config"],
+        "chart_config": recon.get("chart_config", {}),
         "image_base64": recon.get("image_base64", ""),
         "export_svg_path": export_urls.get("svg", ""),
         "export_png_path": export_urls.get("png", ""),
-        "recommended_alt_type": recon.get("recommended_alt_type", ""),
-        "recommendation_reason": recon.get("recommendation_reason", ""),
+        "recommended_alt_type": alt_type,
+        "recommendation_reason": alt_reason,
         "created_at": _ts(),
         "updated_at": _ts(),
     }
@@ -801,16 +1139,403 @@ def get_chart_full(chart_id: str) -> Optional[dict]:
     return chart
 
 
+
+
+
+
+def normalize_extracted_chart(artifact: dict, index: int = 0) -> dict:
+    '''
+    Master canonical adapter that normalizes any backend extraction structure 
+    into a strict frontend-compatible CanonicalChart schema.
+    '''
+    chart_id = artifact.get("id", f"chart-{index}")
+    raw_type = str(artifact.get("chart_type", "bar")).lower()
+    
+    if raw_type in ["column", "vertical_bar", "stacked_bar"]:
+        c_type = "bar"
+    elif raw_type in ["doughnut"]:
+        c_type = "donut"
+    elif raw_type in ["spider"]:
+        c_type = "radar"
+    elif raw_type in ["bar", "line", "area", "pie", "donut", "radar"]:
+        c_type = raw_type
+    else:
+        c_type = "bar"
+
+    confidence = artifact.get("detection_confidence", 0.0)
+
+    ext = artifact.get("extraction", {})
+    if not ext:
+        ext = artifact
+
+    categories = []
+    series = []
+    title = ext.get("title", f"Extracted Chart {index + 1}")
+
+    def parse_series(raw_s: list) -> list:
+        s_out = []
+        for s in raw_s:
+            if not isinstance(s, dict): continue
+            name = str(s.get("name", "Unknown"))
+            # Format A: values array
+            if "values" in s and isinstance(s["values"], list):
+                s_out.append({
+                    "name": name,
+                    "values": [float(v) if v is not None else 0.0 for v in s["values"]]
+                })
+            # Format B: points array (CanonicalDataset)
+            elif "points" in s and isinstance(s["points"], list):
+                vals = []
+                for p in s["points"]:
+                    if isinstance(p, dict) and "value" in p:
+                        v = p["value"]
+                        vals.append(float(v) if v is not None else 0.0)
+                    else:
+                        vals.append(0.0)
+                s_out.append({"name": name, "values": vals})
+        return s_out
+
+    found_data = False
+    for key in ["canonical_data", "canonical_dataset", "data"]:
+        nested = ext.get(key)
+        if isinstance(nested, dict):
+            c = nested.get("categories")
+            s = nested.get("series")
+            if isinstance(c, list) and isinstance(s, list) and len(c) > 0 and len(s) > 0:
+                categories = [str(x) for x in c]
+                series = parse_series(s)
+                found_data = True
+                
+                meta = nested.get("metadata", {})
+                if isinstance(meta, dict) and "confidence" in meta:
+                    confidence = float(meta["confidence"])
+                elif "confidence" in nested:
+                    confidence = float(nested["confidence"])
+                elif "overall_confidence" in nested:
+                    confidence = float(nested["overall_confidence"])
+                    
+                if "title" in nested and nested["title"]:
+                    title = nested["title"]
+                break
+
+    if not found_data:
+        c = ext.get("categories")
+        s = ext.get("series")
+        if isinstance(c, list) and isinstance(s, list) and len(c) > 0 and len(s) > 0:
+            categories = [str(x) for x in c]
+            series = parse_series(s)
+            found_data = True
+
+    if not found_data:
+        for key in ["rows", "table", "dataset", "data_points", "values"]:
+            rows = ext.get(key)
+            if isinstance(rows, list) and len(rows) > 0 and isinstance(rows[0], dict):
+                cat_keys = ["Category", "category", "Label", "label", "Name", "name", "X", "x"]
+                actual_cat_key = None
+                for r_key in rows[0].keys():
+                    if r_key in cat_keys:
+                        actual_cat_key = r_key
+                        break
+                if not actual_cat_key:
+                    actual_cat_key = list(rows[0].keys())[0]
+
+                series_keys = [k for k in rows[0].keys() if k != actual_cat_key]
+                categories = [str(r.get(actual_cat_key, "")) for r in rows]
+                
+                for sk in series_keys:
+                    s_vals = []
+                    for r in rows:
+                        try:
+                            s_vals.append(float(r.get(sk, 0)))
+                        except (ValueError, TypeError):
+                            s_vals.append(0.0)
+                    series.append({"name": sk, "values": s_vals})
+                
+                if len(categories) > 0 and len(series) > 0:
+                    found_data = True
+                    break
+
+    if confidence > 1.0:
+        confidence = confidence / 100.0
+
+    return {
+        "id": chart_id,
+        "chart_type": c_type,
+        "canonical_data": {
+            "title": title,
+            "detected_type": c_type,
+            "categories": categories,
+            "series": series,
+            "metadata": {
+                "confidence": confidence
+            }
+        }
+    }
+
 def list_charts_for_document(doc_id: str) -> list[dict]:
-    """List all charts detected in a document."""
+    """
+    List all charts detected in a document.
+
+    The frontend needs one consolidated chart object, so this endpoint
+    attaches the latest extraction, reconstruction and compliance records
+    to every detected chart.
+    """
+
     db = get_db()
+
     charts = []
-    for snap in db.collection(COL_CHARTS).where("document_id", "==", doc_id).stream():
-        # Strip internal memory fields (like numpy arrays) so they don't break JSON serialization!
-        d = {k: v for k, v in snap.to_dict().items() if not k.startswith("_")}
-        d["id"] = snap.id
-        charts.append(d)
-    return sorted(charts, key=lambda c: (c.get("page_number", 0)))
+
+    chart_snaps = (
+        db.collection(COL_CHARTS)
+        .where(
+            "document_id",
+            "==",
+            doc_id,
+        )
+        .stream()
+    )
+
+    for snap in chart_snaps:
+
+        chart = {
+            k: v
+            for k, v in (
+                snap.to_dict() or {}
+            ).items()
+            if not k.startswith("_")
+        }
+
+        chart["id"] = snap.id
+
+        # --------------------------------------------------------
+        # Latest extraction
+        # --------------------------------------------------------
+
+        extraction_snaps = list(
+            db.collection(COL_EXTRACTIONS)
+            .where(
+                "chart_id",
+                "==",
+                snap.id,
+            )
+            .stream()
+        )
+
+        extraction = None
+
+        if extraction_snaps:
+            extraction = {
+                k: v
+                for k, v in (
+                    extraction_snaps[-1].to_dict()
+                    or {}
+                ).items()
+                if not k.startswith("_")
+            }
+
+        chart["extraction"] = extraction
+
+        # --------------------------------------------------------
+        # Latest reconstruction
+        # --------------------------------------------------------
+
+        reconstruction_snaps = list(
+            db.collection(COL_RECONSTRUCTIONS)
+            .where(
+                "chart_id",
+                "==",
+                snap.id,
+            )
+            .stream()
+        )
+
+        reconstruction = None
+
+        if reconstruction_snaps:
+            reconstruction = {
+                k: v
+                for k, v in (
+                    reconstruction_snaps[-1].to_dict()
+                    or {}
+                ).items()
+                if not k.startswith("_")
+            }
+
+        chart["reconstruction"] = reconstruction
+
+        # --------------------------------------------------------
+        # Latest compliance score
+        # --------------------------------------------------------
+
+        compliance_snaps = list(
+            db.collection(COL_COMPLIANCE)
+            .where(
+                "chart_id",
+                "==",
+                snap.id,
+            )
+            .stream()
+        )
+
+        compliance = None
+
+        if compliance_snaps:
+            compliance = {
+                k: v
+                for k, v in (
+                    compliance_snaps[-1].to_dict()
+                    or {}
+                ).items()
+                if not k.startswith("_")
+            }
+
+        chart["compliance"] = compliance
+
+        # --------------------------------------------------------
+        # Build canonical frontend representation
+        # --------------------------------------------------------
+
+        canonical_data = None
+
+        if extraction:
+            extracted_series = (
+                extraction.get(
+                    "series",
+                    [],
+                )
+                or []
+            )
+
+            categories = []
+
+            for series_item in extracted_series:
+                for point in (
+                    series_item.get(
+                        "points",
+                        [],
+                    )
+                    or []
+                ):
+                    label = point.get(
+                        "label"
+                    )
+
+                    if label is not None:
+                        label = str(label)
+
+                        if label not in categories:
+                            categories.append(
+                                label
+                            )
+
+            canonical_series = []
+
+            for series_item in extracted_series:
+
+                values = []
+
+                point_map = {
+                    str(
+                        point.get(
+                            "label",
+                            "",
+                        )
+                    ): point.get(
+                        "value"
+                    )
+                    for point in (
+                        series_item.get(
+                            "points",
+                            [],
+                        )
+                        or []
+                    )
+                }
+
+                for category in categories:
+                    value = point_map.get(
+                        category,
+                        0,
+                    )
+
+                    try:
+                        value = float(value)
+                    except (
+                        TypeError,
+                        ValueError,
+                    ):
+                        value = 0
+
+                    values.append(value)
+
+                canonical_series.append({
+                    "name": series_item.get(
+                        "name",
+                        "Series",
+                    ),
+                    "color": series_item.get(
+                        "color",
+                        "#4e79a7",
+                    ),
+                    "values": values,
+                })
+
+            canonical_data = {
+                "title": extraction.get(
+                    "title",
+                    "",
+                ),
+                "detected_type": (
+                    extraction.get(
+                        "resolved_chart_type"
+                    )
+                    or chart.get(
+                        "chart_type",
+                        "bar",
+                    )
+                ),
+                "categories": categories,
+                "series": canonical_series,
+                "metadata": {
+                    "confidence": extraction.get(
+                        "extraction_confidence",
+                        0,
+                    ),
+                    "page_number": chart.get(
+                        "page_number"
+                    ),
+                    "bounding_box": chart.get(
+                        "bounding_box"
+                    ),
+                },
+            }
+
+        chart["canonical_data"] = canonical_data
+
+        charts.append(chart)
+
+    return sorted(
+        charts,
+        key=lambda c: (
+            c.get(
+                "page_number",
+                0,
+            ),
+            c.get(
+                "bounding_box",
+                {}).get(
+                    "y",
+                    0,
+                )
+                if isinstance(
+                    c.get(
+                        "bounding_box"
+                    ),
+                    dict,
+                )
+                else 0,
+        ),
+    )
 
 
 def get_processing_events(doc_id: str) -> list[dict]:

@@ -1,7 +1,9 @@
 "use client";
+/* eslint-disable */
 
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { ArrowRight, Sparkles } from "lucide-react";
 
 export function Hero() {
   const router = useRouter();
@@ -18,32 +20,39 @@ export function Hero() {
           alt="Hero Background" 
           fill
           priority
-          className="object-cover object-center w-full h-full opacity-90"
+          className="object-cover object-center w-full h-full opacity-95"
         />
-        {/* Optional overlay to make the button stand out more if the image is bright */}
-        <div className="absolute inset-0 bg-black/10" />
+        {/* Subtle contrast gradient at the bottom for crystal-clear CTA visibility */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent pointer-events-none" />
       </div>
       
-      {/* Premium Large Golden CTA Button (Slightly Reduced, Positioned Higher) */}
-      <div className="relative z-10 w-full flex justify-center px-4">
-        <button
-          onClick={() => router.push("/dashboard")}
-          className="
-            relative isolate inline-flex items-center justify-center gap-5
-            rounded-xl border border-transparent 
-            font-mono text-2xl md:text-[40px] font-bold tracking-[0.1em] uppercase text-[#0B1E33] 
-            px-12 py-6 md:px-24 md:py-10
-            cursor-pointer no-underline 
-            transition-all duration-500 ease-[cubic-bezier(0.2,1.4,0.4,1)]
-            bg-gradient-to-b from-[#E5C989] via-[#C9A86A] to-[#9A7842]
-            shadow-[inset_0_4px_0_rgba(255,255,255,0.6),0_24px_80px_-20px_rgba(201,168,106,1)]
-            hover:-translate-y-2 hover:scale-[1.02] hover:shadow-[inset_0_4px_0_rgba(255,255,255,0.8),0_30px_100px_-20px_rgba(201,168,106,1)]
-            active:translate-y-0 active:scale-95
-            after:absolute after:inset-0 after:rounded-xl after:border-[3px] after:border-white/40 after:pointer-events-none
-          "
+      {/* Professional Premium Golden Animated Shining CTA Button */}
+      <div className="relative z-10 w-full flex flex-col items-center justify-center px-4">
+        <a
+          href="/demo"
+          className="group relative inline-flex items-center justify-center rounded-2xl p-[2px] transition-all duration-500 hover:scale-[1.04] active:scale-[0.98] animate-gold-pulse no-underline cursor-pointer"
         >
-          Begin Verification →
-        </button>
+          {/* Radiant gold halo ambient background */}
+          <div className="absolute -inset-1 rounded-2xl bg-gradient-to-r from-[#FFE8A3] via-[#D4AF37] to-[#B8860B] opacity-60 blur-md transition-all duration-500 group-hover:opacity-100 group-hover:blur-lg" />
+
+          {/* Outer golden rim border */}
+          <div className="relative flex items-center justify-center gap-3 overflow-hidden rounded-[14px] bg-gradient-to-b from-[#FFF2B2] via-[#E8C26E] via-[45%] to-[#B8860B] px-8 py-3.5 sm:px-10 sm:py-4 shadow-[inset_0_1px_2px_rgba(255,255,255,0.95),inset_0_-2px_4px_rgba(120,80,15,0.45),0_12px_32px_rgba(0,0,0,0.5)] border border-[#FFF8DC]/60">
+            
+            {/* Animated continuous sweeping gold shine light reflection */}
+            <div className="pointer-events-none absolute inset-0 -translate-x-full animate-gold-shine bg-gradient-to-r from-transparent via-white/80 to-transparent opacity-85" />
+
+            {/* Sparkle Icon */}
+            <Sparkles className="relative z-10 h-5 w-5 text-[#0B1E33] transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110" />
+
+            {/* CTA Label */}
+            <span className="relative z-10 font-mono text-sm sm:text-base font-bold uppercase tracking-[0.14em] text-[#0B1E33] drop-shadow-[0_1px_0_rgba(255,255,255,0.5)]">
+              Try DECODE
+            </span>
+
+            {/* Interactive Arrow Icon */}
+            <ArrowRight className="relative z-10 h-5 w-5 text-[#0B1E33] transition-transform duration-300 ease-out group-hover:translate-x-1.5" />
+          </div>
+        </a>
       </div>
     </section>
   );

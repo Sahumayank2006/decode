@@ -1,0 +1,3557 @@
+"use client";
+/* eslint-disable */
+
+import React, {
+  ChangeEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+import {
+  Activity,
+  AlertCircle,
+  BarChart3,
+  Check,
+  ChevronDown,
+  CloudUpload,
+  Copy,
+  Database,
+  Download,
+  FileChartColumn,
+  FileText,
+  Layers3,
+  Loader2,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  RotateCw,
+  ScanLine,
+  ShieldCheck,
+  Sparkles,
+  Table2,
+  Trash2,
+  Upload,
+  WandSparkles,
+  X,
+} from "lucide-react";
+
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+import {
+  getApiErrorMessage,
+  getChart,
+  getDocument,
+  getDocumentCharts,
+  getDocumentStatus,
+  uploadDocument,
+} from "@/lib/api";
+
+/* ============================================================
+   TYPES
+   ============================================================ */
+
+type ChartMode =
+  | "bar"
+  | "line"
+  | "area"
+  | "pie"
+  | "donut"
+  | "radar";
+
+type ExtractedSeries = {
+  id: string;
+  name: string;
+  values: number[];
+};
+
+type ExtractedChart = {
+  id: string;
+  title: string;
+  chartType: ChartMode;
+  confidence: number | null;
+  categories: string[];
+  series: ExtractedSeries[];
+  page?: number | null;
+  raw: any;
+};
+
+type EditableRow = {
+  category: string;
+  values: Record<string, number>;
+};
+
+/* ============================================================
+   CONSTANTS
+   ============================================================ */
+
+const SERIES_COLORS = [
+  "#6EE7B7",
+  "#60A5FA",
+  "#FBBF24",
+  "#F472B6",
+  "#A78BFA",
+  "#FB7185",
+  "#22D3EE",
+  "#34D399",
+];
+
+const CHART_MODES: ChartMode[] = [
+  "bar",
+  "line",
+  "area",
+  "pie",
+  "donut",
+  "radar",
+];
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+
+function safeNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  if (typeof value === "string") {
+    const cleaned = value
+      .replace(/,/g, "")
+      .replace(/%/g, "")
+      .trim();
+
+    const parsed = Number(cleaned);
+
+    return Number.isFinite(parsed)
+      ? parsed
+      : fallback;
+  }
+
+  if (
+    value &&
+    typeof value === "object"
+  ) {
+    const objectValue = value as Record<string, unknown>;
+
+    return safeNumber(
+      objectValue.value ??
+        objectValue.y ??
+        objectValue.numeric_value ??
+        objectValue.number,
+      fallback
+    );
+  }
+
+  return fallback;
+}
+
+function cleanLabel(value: unknown, fallback: string): string {
+  if (
+    typeof value === "string" &&
+    value.trim()
+  ) {
+    return value.trim();
+  }
+
+  if (
+    typeof value === "number" &&
+    Number.isFinite(value)
+  ) {
+    return String(value);
+  }
+
+  return fallback;
+}
+
+function normalizeChartType(
+  value: unknown
+): ChartMode {
+  const normalized = String(
+    value ?? "bar"
+  )
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+
+  if (normalized.includes("donut")) {
+    return "donut";
+  }
+
+  if (
+    normalized === "pie" ||
+    normalized.includes("pie")
+  ) {
+    return "pie";
+  }
+
+  if (
+    normalized === "line" ||
+    normalized.includes("line")
+  ) {
+    return "line";
+  }
+
+  if (
+    normalized === "area" ||
+    normalized.includes("area")
+  ) {
+    return "area";
+  }
+
+  if (
+    normalized === "radar" ||
+    normalized.includes("radar")
+  ) {
+    return "radar";
+  }
+
+  return "bar";
+}
+
+function unwrapChart(
+  payload: any
+): any {
+  if (!payload) {
+    return null;
+  }
+
+  return (
+    payload.chart ??
+    payload.data?.chart ??
+    payload.data ??
+    payload
+  );
+}
+
+function extractDocumentId(
+  payload: any
+): string | null {
+  return (
+    payload?.document_id ??
+    payload?.documentId ??
+    payload?.id ??
+    payload?.document?.id ??
+    payload?.data?.document_id ??
+    payload?.data?.documentId ??
+    payload?.data?.id ??
+    payload?.data?.document?.id ??
+    null
+  );
+}
+
+function extractDocumentName(
+  payload: any
+): string | null {
+  return (
+    payload?.filename ??
+    payload?.file_name ??
+    payload?.document_name ??
+    payload?.name ??
+    payload?.document?.filename ??
+    payload?.document?.name ??
+    payload?.data?.filename ??
+    payload?.data?.file_name ??
+    payload?.data?.document_name ??
+    null
+  );
+}
+
+/* ============================================================
+   GENERIC SERIES NORMALIZATION
+   ============================================================ */
+
+function normalizeValueArray(
+  value: any
+): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) =>
+    safeNumber(item)
+  );
+}
+
+function getSeriesValues(
+  series: any
+): number[] {
+  if (!series) {
+    return [];
+  }
+
+  const values =
+    series.values ??
+    series.data ??
+    series.points ??
+    series.y_values ??
+    series.y ??
+    [];
+
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return normalizeValueArray(values);
+}
+
+function inferCategoriesFromSeries(
+  series: any[]
+): string[] {
+  const first = series?.[0];
+
+  if (!first) {
+    return [];
+  }
+
+  const points =
+    first.data ??
+    first.points ??
+    [];
+
+  if (!Array.isArray(points)) {
+    return [];
+  }
+
+  return points.map(
+    (point: any, index: number) =>
+      cleanLabel(
+        point?.category ??
+          point?.label ??
+          point?.x ??
+          point?.name,
+        `Category ${index + 1}`
+      )
+  );
+}
+
+/* ============================================================
+   DATA-ROW FORMAT
+   ============================================================ */
+
+function normalizeFromDataRows(
+  chart: any
+): {
+  categories: string[];
+  series: ExtractedSeries[];
+} | null {
+  const rows =
+    Array.isArray(chart?.data)
+      ? chart.data
+      : Array.isArray(chart?.rows)
+        ? chart.rows
+        : null;
+
+  if (!rows || rows.length === 0) {
+    return null;
+  }
+
+  if (
+    typeof rows[0] !== "object" ||
+    rows[0] === null
+  ) {
+    return null;
+  }
+
+  const firstRow =
+    rows[0] as Record<string, unknown>;
+
+  const keys = Object.keys(firstRow);
+
+  const categoryKey =
+    [
+      "category",
+      "label",
+      "name",
+      "x",
+      "group",
+    ].find((key) =>
+      keys.includes(key)
+    ) ?? keys[0];
+
+  const numericKeys = keys.filter(
+    (key) => {
+      if (key === categoryKey) {
+        return false;
+      }
+
+      return rows.some((row: any) => {
+        const value = row?.[key];
+
+        if (
+          typeof value === "number" &&
+          Number.isFinite(value)
+        ) {
+          return true;
+        }
+
+        if (
+          typeof value === "string" &&
+          value.trim() !== ""
+        ) {
+          return Number.isFinite(
+            Number(
+              value.replace(/,/g, "")
+            )
+          );
+        }
+
+        return false;
+      });
+    }
+  );
+
+  if (numericKeys.length === 0) {
+    return null;
+  }
+
+  const categories = rows.map(
+    (row: any, index: number) =>
+      cleanLabel(
+        row?.[categoryKey],
+        `Category ${index + 1}`
+      )
+  );
+
+  const series = numericKeys.map(
+    (key, seriesIndex) => ({
+      id: `series-${seriesIndex}-${key}`,
+      name: key,
+      values: rows.map(
+        (row: any) =>
+          safeNumber(row?.[key])
+      ),
+    })
+  );
+
+  return {
+    categories,
+    series,
+  };
+}
+
+/* ============================================================
+   CHART NORMALIZATION
+   ============================================================ */
+
+function normalizeExtractedChart(
+  payload: any,
+  fallbackIndex = 0
+): ExtractedChart | null {
+  const chart = unwrapChart(payload);
+
+  if (!chart) {
+    return null;
+  }
+
+  const id = String(
+    chart.id ??
+      chart.chart_id ??
+      chart.chartId ??
+      `extracted-chart-${fallbackIndex + 1}`
+  );
+
+  const title =
+    cleanLabel(
+      chart.title ??
+        chart.name ??
+        chart.chart_title ??
+        chart.figure_title,
+      `Extracted Chart ${fallbackIndex + 1}`
+    );
+
+  const chartType = normalizeChartType(
+    chart.chart_type ??
+      chart.chartType ??
+      chart.type ??
+      chart.render_type ??
+      chart.renderType
+  );
+
+  const confidenceRaw =
+    chart.confidence ??
+    chart.source_confidence ??
+    chart.extraction_confidence ??
+    chart.score ??
+    null;
+
+  let confidence: number | null = null;
+
+  if (confidenceRaw !== null) {
+    const number = safeNumber(
+      confidenceRaw,
+      NaN
+    );
+
+    if (Number.isFinite(number)) {
+      confidence =
+        number <= 1
+          ? number * 100
+          : number;
+    }
+  }
+
+  let categories: string[] =
+    Array.isArray(chart.categories)
+      ? chart.categories.map(
+          (item: unknown, index: number) =>
+            cleanLabel(
+              item,
+              `Category ${index + 1}`
+            )
+        )
+      : Array.isArray(chart.labels)
+        ? chart.labels.map(
+            (item: unknown, index: number) =>
+              cleanLabel(
+                item,
+                `Category ${index + 1}`
+              )
+          )
+        : Array.isArray(chart.x_values)
+          ? chart.x_values.map(
+              (item: unknown, index: number) =>
+                cleanLabel(
+                  item,
+                  `Category ${index + 1}`
+                )
+            )
+          : [];
+
+  let series: ExtractedSeries[] = [];
+
+  if (
+    Array.isArray(chart.series) &&
+    chart.series.length > 0
+  ) {
+    series = chart.series.map(
+      (item: any, index: number) => ({
+        id: String(
+          item?.id ??
+            item?.series_id ??
+            `series-${index}`
+        ),
+        name: cleanLabel(
+          item?.name ??
+            item?.label ??
+            item?.title ??
+            item?.key,
+          `Series ${index + 1}`
+        ),
+        values: getSeriesValues(item),
+      })
+    );
+
+    if (
+      categories.length === 0
+    ) {
+      categories =
+        inferCategoriesFromSeries(
+          chart.series
+        );
+    }
+  }
+
+  if (
+    categories.length === 0 ||
+    series.length === 0
+  ) {
+    const fromRows =
+      normalizeFromDataRows(chart);
+
+    if (fromRows) {
+      categories =
+        fromRows.categories;
+
+      series =
+        fromRows.series;
+    }
+  }
+
+  /*
+   * Some backend formats store:
+   *
+   * data: {
+   *   categories: [],
+   *   series: []
+   * }
+   */
+  if (
+    categories.length === 0 &&
+    chart.data &&
+    typeof chart.data === "object" &&
+    !Array.isArray(chart.data)
+  ) {
+    const nested =
+      chart.data;
+
+    if (
+      Array.isArray(
+        nested.categories
+      )
+    ) {
+      categories =
+        nested.categories.map(
+          (
+            item: unknown,
+            index: number
+          ) =>
+            cleanLabel(
+              item,
+              `Category ${index + 1}`
+            )
+        );
+    }
+
+    if (
+      Array.isArray(nested.series)
+    ) {
+      series =
+        nested.series.map(
+          (
+            item: any,
+            index: number
+          ) => ({
+            id: String(
+              item?.id ??
+                `series-${index}`
+            ),
+            name: cleanLabel(
+              item?.name ??
+                item?.label,
+              `Series ${index + 1}`
+            ),
+            values:
+              getSeriesValues(item),
+          })
+        );
+    }
+  }
+
+  /*
+   * Never pretend an empty extraction
+   * is valid chart data.
+   */
+  if (
+    categories.length === 0 ||
+    series.length === 0
+  ) {
+    return {
+      id,
+      title,
+      chartType,
+      confidence,
+      categories: [],
+      series: [],
+      page:
+        chart.page ??
+        chart.page_number ??
+        chart.pageNumber ??
+        null,
+      raw: payload,
+    };
+  }
+
+  const maxLength =
+    Math.max(
+      categories.length,
+      ...series.map(
+        (item) =>
+          item.values.length
+      )
+    );
+
+  while (
+    categories.length <
+    maxLength
+  ) {
+    categories.push(
+      `Category ${categories.length + 1}`
+    );
+  }
+
+  series = series.map(
+    (item) => ({
+      ...item,
+      values: [
+        ...item.values,
+        ...Array(
+          Math.max(
+            0,
+            categories.length -
+              item.values.length
+          )
+        ).fill(0),
+      ],
+    })
+  );
+
+  return {
+    id,
+    title,
+    chartType,
+    confidence,
+    categories,
+    series,
+    page:
+      chart.page ??
+      chart.page_number ??
+      chart.pageNumber ??
+      null,
+    raw: payload,
+  };
+}
+
+/* ============================================================
+   EXTRACT CHART ARRAY
+   ============================================================ */
+
+function extractChartList(
+  payload: any
+): any[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (
+    Array.isArray(payload?.charts)
+  ) {
+    return payload.charts;
+  }
+
+  if (
+    Array.isArray(payload?.data?.charts)
+  ) {
+    return payload.data.charts;
+  }
+
+  if (
+    Array.isArray(payload?.results)
+  ) {
+    return payload.results;
+  }
+
+  if (
+    Array.isArray(payload?.data)
+  ) {
+    return payload.data;
+  }
+
+  return [];
+}
+
+/* ============================================================
+   EDITABLE ROWS
+   ============================================================ */
+
+function chartToRows(
+  chart: ExtractedChart
+): EditableRow[] {
+  return chart.categories.map(
+    (category, rowIndex) => {
+      const values: Record<
+        string,
+        number
+      > = {};
+
+      chart.series.forEach(
+        (series) => {
+          values[series.id] =
+            safeNumber(
+              series.values[rowIndex]
+            );
+        }
+      );
+
+      return {
+        category,
+        values,
+      };
+    }
+  );
+}
+
+function rowsToChartData(
+  rows: EditableRow[],
+  series: ExtractedSeries[]
+) {
+  return rows.map(
+    (row) => {
+      const output: Record<
+        string,
+        string | number
+      > = {
+        category: row.category,
+      };
+
+      series.forEach(
+        (series) => {
+          output[series.id] =
+            safeNumber(
+              row.values[series.id]
+            );
+        }
+      );
+
+      return output;
+    }
+  );
+}
+
+/* ============================================================
+   COMPONENT
+   ============================================================ */
+
+export default function DemoWorkspace() {
+  const fileInputRef =
+    useRef<HTMLInputElement | null>(
+      null
+    );
+
+  const [fileName, setFileName] =
+    useState("No document loaded");
+
+  const [documentId, setDocumentId] =
+    useState<string | null>(null);
+
+  const [charts, setCharts] =
+    useState<ExtractedChart[]>([]);
+
+  const [selectedChartId, setSelectedChartId] =
+    useState<string | null>(null);
+
+  const [rows, setRows] =
+    useState<EditableRow[]>([]);
+
+  const [chartMode, setChartMode] =
+    useState<ChartMode>("bar");
+
+  const [isUploading, setIsUploading] =
+    useState(false);
+
+  const [uploadProgress, setUploadProgress] =
+    useState(0);
+
+  const [processingStage, setProcessingStage] =
+    useState("Ready");
+
+  const [error, setError] =
+    useState<string | null>(null);
+
+  const [message, setMessage] =
+    useState<string | null>(null);
+
+  const [history, setHistory] =
+    useState<EditableRow[][]>([]);
+
+  const [future, setFuture] =
+    useState<EditableRow[][]>([]);
+
+  /* ==========================================================
+     SELECTED CHART
+     ========================================================== */
+
+  const selectedChart =
+    useMemo(
+      () =>
+        charts.find(
+          (chart) =>
+            chart.id ===
+            selectedChartId
+        ) ?? null,
+      [charts, selectedChartId]
+    );
+
+  const activeSeries =
+    selectedChart?.series ?? [];
+
+  /* ==========================================================
+     METRICS
+     ========================================================== */
+
+  const metrics =
+    useMemo(() => {
+      const values =
+        rows.flatMap(
+          (row) =>
+            Object.values(
+              row.values
+            )
+        );
+
+      const total =
+        values.reduce(
+          (sum, value) =>
+            sum + safeNumber(value),
+          0
+        );
+
+      const confidenceValues =
+        charts
+          .map(
+            (chart) =>
+              chart.confidence
+          )
+          .filter(
+            (
+              value
+            ): value is number =>
+              typeof value ===
+              "number"
+          );
+
+      const confidence =
+        confidenceValues.length
+          ? confidenceValues.reduce(
+              (sum, value) =>
+                sum + value,
+              0
+            ) /
+            confidenceValues.length
+          : null;
+
+      return {
+        artifacts:
+          charts.length,
+        categories:
+          rows.length,
+        dataPoints:
+          rows.length *
+          activeSeries.length,
+        total,
+        confidence,
+      };
+    }, [
+      rows,
+      charts,
+      activeSeries,
+    ]);
+
+  /* ==========================================================
+     CHART DATA
+     ========================================================== */
+
+  const chartData =
+    useMemo(
+      () =>
+        rowsToChartData(
+          rows,
+          activeSeries
+        ),
+      [rows, activeSeries]
+    );
+
+  /* ==========================================================
+     HISTORY
+     ========================================================== */
+
+  const commitRows = (
+    next: EditableRow[]
+  ) => {
+    setHistory(
+      (current) => [
+        ...current,
+        rows.map(
+          (row) => ({
+            category:
+              row.category,
+            values: {
+              ...row.values,
+            },
+          })
+        ),
+      ]
+    );
+
+    setFuture([]);
+    setRows(next);
+  };
+
+  const undo = () => {
+    if (
+      history.length === 0
+    ) {
+      return;
+    }
+
+    const previous =
+      history[
+        history.length - 1
+      ];
+
+    setHistory(
+      (current) =>
+        current.slice(
+          0,
+          current.length - 1
+        )
+    );
+
+    setFuture(
+      (current) => [
+        ...current,
+        rows,
+      ]
+    );
+
+    setRows(previous);
+  };
+
+  const redo = () => {
+    if (
+      future.length === 0
+    ) {
+      return;
+    }
+
+    const next =
+      future[
+        future.length - 1
+      ];
+
+    setFuture(
+      (current) =>
+        current.slice(
+          0,
+          current.length - 1
+        )
+    );
+
+    setHistory(
+      (current) => [
+        ...current,
+        rows,
+      ]
+    );
+
+    setRows(next);
+  };
+
+  /* ==========================================================
+     SELECT CHART
+     ========================================================== */
+
+  const selectChart = (
+    chart: ExtractedChart
+  ) => {
+    setSelectedChartId(
+      chart.id
+    );
+
+    setRows(
+      chartToRows(chart)
+    );
+
+    setHistory([]);
+    setFuture([]);
+
+    setChartMode(
+      chart.chartType
+    );
+  };
+
+  /* ==========================================================
+     UPDATE CELL
+     ========================================================== */
+
+  const updateCell = (
+    rowIndex: number,
+    seriesId: string,
+    value: string
+  ) => {
+    const next =
+      rows.map(
+        (row, index) => {
+          if (
+            index !== rowIndex
+          ) {
+            return row;
+          }
+
+          return {
+            ...row,
+            values: {
+              ...row.values,
+              [seriesId]:
+                safeNumber(
+                  value
+                ),
+            },
+          };
+        }
+      );
+
+    commitRows(next);
+  };
+
+  const updateCategory = (
+    rowIndex: number,
+    value: string
+  ) => {
+    const next =
+      rows.map(
+        (row, index) =>
+          index === rowIndex
+            ? {
+                ...row,
+                category:
+                  value,
+              }
+            : row
+      );
+
+    commitRows(next);
+  };
+
+  /* ==========================================================
+     ROW OPERATIONS
+     ========================================================== */
+
+  const addRow = () => {
+    const values: Record<
+      string,
+      number
+    > = {};
+
+    activeSeries.forEach(
+      (series) => {
+        values[series.id] = 0;
+      }
+    );
+
+    commitRows([
+      ...rows,
+      {
+        category: `Category ${
+          rows.length + 1
+        }`,
+        values,
+      },
+    ]);
+  };
+
+  const removeRow = (
+    index: number
+  ) => {
+    if (rows.length <= 1) {
+      return;
+    }
+
+    commitRows(
+      rows.filter(
+        (_, rowIndex) =>
+          rowIndex !== index
+      )
+    );
+  };
+
+  /* ==========================================================
+     ADD SERIES
+     ========================================================== */
+
+  const addSeries = () => {
+    if (!selectedChart) {
+      return;
+    }
+
+    const id = `series-custom-${Date.now()}`;
+
+    const newSeries: ExtractedSeries = {
+      id,
+      name: `Series ${
+        activeSeries.length + 1
+      }`,
+      values: rows.map(
+        () => 0
+      ),
+    };
+
+    const nextChart: ExtractedChart =
+      {
+        ...selectedChart,
+        series: [
+          ...selectedChart.series,
+          newSeries,
+        ],
+      };
+
+    setCharts(
+      (current) =>
+        current.map(
+          (chart) =>
+            chart.id ===
+            selectedChart.id
+              ? nextChart
+              : chart
+        )
+    );
+
+    setRows(
+      rows.map(
+        (row) => ({
+          ...row,
+          values: {
+            ...row.values,
+            [id]: 0,
+          },
+        })
+      )
+    );
+  };
+
+  /* ==========================================================
+     PDF PICKER
+     ========================================================== */
+
+  const triggerFilePicker =
+    () => {
+      if (isUploading) {
+        return;
+      }
+
+      setError(null);
+      setMessage(null);
+
+      fileInputRef.current?.click();
+    };
+
+  const handleFileSelection =
+    (
+      event: ChangeEvent<HTMLInputElement>
+    ) => {
+      const file =
+        event.target.files?.[0];
+
+      if (file) {
+        void processPdf(file);
+      }
+
+      event.target.value = "";
+    };
+
+  /* ==========================================================
+     POLL DOCUMENT
+     ========================================================== */
+
+  const waitForPipeline =
+    async (
+      id: string
+    ) => {
+      /*
+       * Backend runs the chart pipeline
+       * in a background thread.
+       *
+       * We therefore wait for the actual
+       * backend status instead of assuming
+       * that 14 seconds is enough.
+       */
+
+      for (
+        let attempt = 0;
+        attempt < 90;
+        attempt++
+      ) {
+        const status =
+          await getDocumentStatus(
+            id
+          );
+
+        const rawStatus =
+          String(
+            status?.status ??
+              status?.processing_status ??
+              status?.data?.status ??
+              ""
+          ).toLowerCase();
+
+        const progress =
+          Math.min(
+            88,
+            35 +
+              Math.round(
+                (attempt / 90) *
+                  53
+              )
+          );
+
+        setUploadProgress(
+          progress
+        );
+
+        setProcessingStage(
+          status?.current_stage ??
+            status?.stage ??
+            "Processing document"
+        );
+
+        if (
+          rawStatus.includes(
+            "failed"
+          ) ||
+          rawStatus.includes(
+            "error"
+          )
+        ) {
+          throw new Error(
+            status?.error_message ??
+              status?.message ??
+              "DECODE pipeline failed."
+          );
+        }
+
+        if (
+          rawStatus.includes(
+            "complete"
+          ) ||
+          rawStatus.includes(
+            "success"
+          ) ||
+          rawStatus ===
+            "completed" ||
+          rawStatus === "done"
+        ) {
+          return;
+        }
+
+        await new Promise(
+          (resolve) =>
+            window.setTimeout(
+              resolve,
+              1000
+            )
+        );
+      }
+
+      throw new Error(
+        "DECODE is still processing the document. Please wait and refresh the workspace."
+      );
+    };
+
+  /* ==========================================================
+     FETCH ALL CHARTS
+     ========================================================== */
+
+  const loadCharts =
+    async (
+      id: string
+    ) => {
+      setProcessingStage(
+        "Loading extracted charts"
+      );
+
+      let payload: any = null;
+
+      /*
+       * One extra retry loop is useful because
+       * Firebase/database writes and the background
+       * processing thread may finish almost together.
+       */
+
+      for (
+        let attempt = 0;
+        attempt < 8;
+        attempt++
+      ) {
+        payload =
+          await getDocumentCharts(
+            id
+          );
+
+        const summaries =
+          extractChartList(
+            payload
+          );
+
+        if (
+          summaries.length > 0
+        ) {
+          break;
+        }
+
+        await new Promise(
+          (resolve) =>
+            window.setTimeout(
+              resolve,
+              1000
+            )
+        );
+      }
+
+      const summaries =
+        extractChartList(
+          payload
+        );
+
+      if (
+        summaries.length === 0
+      ) {
+        throw new Error(
+          "The DECODE pipeline completed, but no chart artifacts were returned."
+        );
+      }
+
+      setProcessingStage(
+        "Reconstructing chart previews"
+      );
+
+      /*
+       * The document endpoint can return
+       * lightweight chart records.
+       *
+       * Fetch every chart individually so
+       * we get the complete extraction.
+       */
+
+      const fullCharts =
+        await Promise.all(
+          summaries.map(
+            async (
+              summary: any,
+              index: number
+            ) => {
+              const chartId =
+                summary?.id ??
+                summary?.chart_id ??
+                summary?.chartId;
+
+              if (!chartId) {
+                return summary;
+              }
+
+              try {
+                return await getChart(
+                  String(
+                    chartId
+                  )
+                );
+              } catch {
+                /*
+                 * If the detailed endpoint
+                 * is unavailable, keep the
+                 * summary instead of losing
+                 * the artifact.
+                 */
+                return summary;
+              }
+            }
+          )
+        );
+
+      const normalized =
+        fullCharts
+          .map(
+            (
+              chart,
+              index
+            ) =>
+              normalizeExtractedChart(
+                chart,
+                index
+              )
+          )
+          .filter(
+            (
+              chart
+            ): chart is ExtractedChart =>
+              Boolean(chart)
+          );
+
+      if (
+        normalized.length === 0
+      ) {
+        throw new Error(
+          "Charts were detected, but DECODE returned no usable chart objects."
+        );
+      }
+
+      setCharts(
+        normalized
+      );
+
+      /*
+       * IMPORTANT:
+       *
+       * We intentionally do NOT create
+       * fake Q1/Q2/Q3/Q4 rows here.
+       */
+
+      const first =
+        normalized[0];
+
+      setSelectedChartId(
+        first.id
+      );
+
+      setRows(
+        chartToRows(first)
+      );
+
+      setChartMode(
+        first.chartType
+      );
+
+      setHistory([]);
+      setFuture([]);
+
+      setUploadProgress(
+        100
+      );
+
+      setProcessingStage(
+        "Complete"
+      );
+
+      return normalized;
+    };
+
+  /* ==========================================================
+     PROCESS PDF
+     ========================================================== */
+
+  const processPdf =
+    async (
+      file: File
+    ) => {
+      if (isUploading) {
+        return;
+      }
+
+      if (
+        file.type !==
+          "application/pdf" &&
+        !file.name
+          .toLowerCase()
+          .endsWith(".pdf")
+      ) {
+        setError(
+          "Please select a PDF file."
+        );
+        return;
+      }
+
+      if (
+        file.size === 0
+      ) {
+        setError(
+          "The selected PDF is empty."
+        );
+        return;
+      }
+
+      setIsUploading(true);
+      setError(null);
+      setMessage(null);
+
+      /*
+       * Clear old demo/extracted state
+       * immediately.
+       */
+
+      setCharts([]);
+      setSelectedChartId(
+        null
+      );
+      setRows([]);
+      setHistory([]);
+      setFuture([]);
+
+      setFileName(
+        file.name
+      );
+
+      try {
+        setUploadProgress(
+          5
+        );
+
+        setProcessingStage(
+          "Uploading PDF"
+        );
+
+        const uploadResult =
+          await uploadDocument(
+            file
+          );
+
+        const id =
+          extractDocumentId(
+            uploadResult
+          );
+
+        if (!id) {
+          throw new Error(
+            "The backend accepted the PDF but did not return a document ID."
+          );
+        }
+
+        setDocumentId(id);
+
+        setUploadProgress(
+          20
+        );
+
+        setProcessingStage(
+          "Document registered"
+        );
+
+        /*
+         * Metadata is useful for filename/status,
+         * but failure to retrieve it should not
+         * stop chart extraction.
+         */
+
+        try {
+          const document =
+            await getDocument(
+              id
+            );
+
+          const backendName =
+            extractDocumentName(
+              document
+            );
+
+          if (
+            backendName
+          ) {
+            setFileName(
+              backendName
+                .split(
+                  /[\\/]/
+                )
+                .pop() ??
+                file.name
+            );
+          }
+        } catch {
+          // Metadata is optional.
+        }
+
+        setUploadProgress(
+          35
+        );
+
+        await waitForPipeline(
+          id
+        );
+
+        await loadCharts(
+          id
+        );
+
+        setMessage(
+          "PDF processed successfully. The workspace is now showing the real extracted chart data."
+        );
+      } catch (
+        uploadError
+      ) {
+        console.error(
+          "DECODE PDF processing error:",
+          uploadError
+        );
+
+        setError(
+          getApiErrorMessage(
+            uploadError
+          )
+        );
+
+        setProcessingStage(
+          "Processing failed"
+        );
+      } finally {
+        setIsUploading(
+          false
+        );
+
+        window.setTimeout(
+          () =>
+            setUploadProgress(
+              0
+            ),
+          1000
+        );
+      }
+    };
+
+  /* ==========================================================
+     RESET
+     ========================================================== */
+
+  const resetWorkspace =
+    () => {
+      setDocumentId(null);
+      setFileName(
+        "No document loaded"
+      );
+      setCharts([]);
+      setSelectedChartId(
+        null
+      );
+      setRows([]);
+      setChartMode(
+        "bar"
+      );
+      setHistory([]);
+      setFuture([]);
+      setError(null);
+      setMessage(null);
+      setProcessingStage(
+        "Ready"
+      );
+    };
+
+  /* ==========================================================
+     CSV
+     ========================================================== */
+
+  const exportCSV =
+    () => {
+      if (
+        !selectedChart ||
+        rows.length === 0
+      ) {
+        return;
+      }
+
+      const header = [
+        "Category",
+        ...activeSeries.map(
+          (series) =>
+            series.name
+        ),
+      ];
+
+      const body =
+        rows.map(
+          (row) =>
+            [
+              `"${row.category.replace(
+                /"/g,
+                '""'
+              )}"`,
+              ...activeSeries.map(
+                (series) =>
+                  row.values[
+                    series.id
+                  ] ?? 0
+              ),
+            ].join(",")
+        );
+
+      const csv =
+        [
+          header.join(","),
+          ...body,
+        ].join("\n");
+
+      const blob =
+        new Blob(
+          [csv],
+          {
+            type:
+              "text/csv;charset=utf-8;",
+          }
+        );
+
+      const url =
+        URL.createObjectURL(
+          blob
+        );
+
+      const anchor =
+        document.createElement(
+          "a"
+        );
+
+      anchor.href = url;
+
+      anchor.download =
+        `${
+          selectedChart.title
+            .replace(
+              /[^a-z0-9]+/gi,
+              "-"
+            )
+            .toLowerCase()
+        }-decoded.csv`;
+
+      document.body.appendChild(
+        anchor
+      );
+
+      anchor.click();
+
+      anchor.remove();
+
+      URL.revokeObjectURL(
+        url
+      );
+    };
+
+  /* ==========================================================
+     COPY CONFIG
+     ========================================================== */
+
+  const copyConfig =
+    async () => {
+      if (
+        !selectedChart
+      ) {
+        return;
+      }
+
+      const config = {
+        id:
+          selectedChart.id,
+        title:
+          selectedChart.title,
+        chart_type:
+          chartMode,
+        confidence:
+          selectedChart.confidence,
+        categories:
+          rows.map(
+            (row) =>
+              row.category
+          ),
+        series:
+          activeSeries.map(
+            (series) => ({
+              id:
+                series.id,
+              name:
+                series.name,
+              values:
+                rows.map(
+                  (row) =>
+                    row.values[
+                      series.id
+                    ] ?? 0
+                ),
+            })
+          ),
+      };
+
+      try {
+        await navigator.clipboard.writeText(
+          JSON.stringify(
+            config,
+            null,
+            2
+          )
+        );
+
+        setMessage(
+          "Chart configuration copied to clipboard."
+        );
+
+        window.setTimeout(
+          () =>
+            setMessage(
+              null
+            ),
+          2500
+        );
+      } catch {
+        setError(
+          "Clipboard access was blocked by the browser."
+        );
+      }
+    };
+
+  /* ==========================================================
+     RENDER CHART
+     ========================================================== */
+
+  const renderChart =
+    () => {
+      if (
+        !selectedChart ||
+        activeSeries.length ===
+          0 ||
+        rows.length === 0
+      ) {
+        return (
+          <div className="flex h-full items-center justify-center">
+            <div className="max-w-sm text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.02]">
+                <BarChart3
+                  size={20}
+                  className="text-white/20"
+                />
+              </div>
+
+              <div className="mt-4 text-sm font-medium text-white/60">
+                No extracted chart data
+              </div>
+
+              <div className="mt-2 text-xs leading-5 text-white/25">
+                Upload a PDF and DECODE will
+                populate this visualization
+                from the extracted chart data.
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (
+        chartMode ===
+          "pie" ||
+        chartMode ===
+          "donut"
+      ) {
+        const primary =
+          activeSeries[0];
+
+        const pieData =
+          rows.map(
+            (row) => ({
+              name:
+                row.category,
+              value:
+                row.values[
+                  primary.id
+                ] ?? 0,
+            })
+          );
+
+        return (
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+          >
+            <PieChart>
+              <Pie
+                data={
+                  pieData
+                }
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                innerRadius={
+                  chartMode ===
+                  "donut"
+                    ? "58%"
+                    : 0
+                }
+                outerRadius="76%"
+                paddingAngle={
+                  3
+                }
+              >
+                {pieData.map(
+                  (
+                    _,
+                    index
+                  ) => (
+                    <Cell
+                      key={
+                        `cell-${index}`
+                      }
+                      fill={
+                        SERIES_COLORS[
+                          index %
+                            SERIES_COLORS.length
+                        ]
+                      }
+                    />
+                  )
+                )}
+              </Pie>
+
+              <Tooltip />
+
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+        );
+      }
+
+      if (
+        chartMode ===
+        "radar"
+      ) {
+        return (
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+          >
+            <RadarChart
+              data={
+                chartData
+              }
+            >
+              <PolarGrid />
+
+              <PolarAngleAxis
+                dataKey="category"
+              />
+
+              <PolarRadiusAxis />
+
+              {activeSeries.map(
+                (
+                  series,
+                  index
+                ) => (
+                  <Radar
+                    key={
+                      series.id
+                    }
+                    name={
+                      series.name
+                    }
+                    dataKey={
+                      series.id
+                    }
+                    stroke={
+                      SERIES_COLORS[
+                        index %
+                          SERIES_COLORS.length
+                      ]
+                    }
+                    fill={
+                      SERIES_COLORS[
+                        index %
+                          SERIES_COLORS.length
+                      ]
+                    }
+                    fillOpacity={
+                      0.18
+                    }
+                  />
+                )
+              )}
+
+              <Legend />
+
+              <Tooltip />
+            </RadarChart>
+          </ResponsiveContainer>
+        );
+      }
+
+      if (
+        chartMode ===
+        "line"
+      ) {
+        return (
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+          >
+            <LineChart
+              data={
+                chartData
+              }
+              margin={{
+                top: 15,
+                right: 20,
+                left: 5,
+                bottom: 10,
+              }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(255,255,255,.06)"
+              />
+
+              <XAxis
+                dataKey="category"
+                tick={{
+                  fill:
+                    "rgba(255,255,255,.35)",
+                  fontSize: 11,
+                }}
+              />
+
+              <YAxis
+                tick={{
+                  fill:
+                    "rgba(255,255,255,.35)",
+                  fontSize: 11,
+                }}
+              />
+
+              <Tooltip />
+
+              <Legend />
+
+              {activeSeries.map(
+                (
+                  series,
+                  index
+                ) => (
+                  <Line
+                    key={
+                      series.id
+                    }
+                    type="monotone"
+                    dataKey={
+                      series.id
+                    }
+                    name={
+                      series.name
+                    }
+                    stroke={
+                      SERIES_COLORS[
+                        index %
+                          SERIES_COLORS.length
+                      ]
+                    }
+                    strokeWidth={
+                      3
+                    }
+                    dot={{
+                      r: 4,
+                    }}
+                  />
+                )
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        );
+      }
+
+      if (
+        chartMode ===
+        "area"
+      ) {
+        return (
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+          >
+            <AreaChart
+              data={
+                chartData
+              }
+              margin={{
+                top: 15,
+                right: 20,
+                left: 5,
+                bottom: 10,
+              }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(255,255,255,.06)"
+              />
+
+              <XAxis
+                dataKey="category"
+                tick={{
+                  fill:
+                    "rgba(255,255,255,.35)",
+                  fontSize: 11,
+                }}
+              />
+
+              <YAxis
+                tick={{
+                  fill:
+                    "rgba(255,255,255,.35)",
+                  fontSize: 11,
+                }}
+              />
+
+              <Tooltip />
+
+              <Legend />
+
+              {activeSeries.map(
+                (
+                  series,
+                  index
+                ) => (
+                  <Area
+                    key={
+                      series.id
+                    }
+                    type="monotone"
+                    dataKey={
+                      series.id
+                    }
+                    name={
+                      series.name
+                    }
+                    stroke={
+                      SERIES_COLORS[
+                        index %
+                          SERIES_COLORS.length
+                      ]
+                    }
+                    fill={
+                      SERIES_COLORS[
+                        index %
+                          SERIES_COLORS.length
+                      ]
+                    }
+                    fillOpacity={
+                      0.12
+                    }
+                    strokeWidth={
+                      3
+                    }
+                  />
+                )
+              )}
+            </AreaChart>
+          </ResponsiveContainer>
+        );
+      }
+
+      return (
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+        >
+          <BarChart
+            data={
+              chartData
+            }
+            margin={{
+              top: 15,
+              right: 20,
+              left: 5,
+              bottom: 10,
+            }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="rgba(255,255,255,.06)"
+            />
+
+            <XAxis
+              dataKey="category"
+              tick={{
+                fill:
+                  "rgba(255,255,255,.35)",
+                fontSize: 11,
+              }}
+            />
+
+            <YAxis
+              tick={{
+                fill:
+                  "rgba(255,255,255,.35)",
+                fontSize: 11,
+              }}
+            />
+
+            <Tooltip />
+
+            <Legend />
+
+            {activeSeries.map(
+              (
+                series,
+                index
+              ) => (
+                <Bar
+                  key={
+                    series.id
+                  }
+                  dataKey={
+                    series.id
+                  }
+                  name={
+                    series.name
+                  }
+                  fill={
+                    SERIES_COLORS[
+                      index %
+                        SERIES_COLORS.length
+                    ]
+                  }
+                  radius={[
+                    6,
+                    6,
+                    0,
+                    0,
+                  ]}
+                />
+              )
+            )}
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    };
+
+  /* ==========================================================
+     UI
+     ========================================================== */
+
+  return (
+    <main className="min-h-screen bg-[#06100c] text-white">
+      {/* HEADER */}
+
+      <header className="sticky top-0 z-50 border-b border-white/[0.06] bg-[#06100c]/90 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-[1500px] items-center justify-between px-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-300 text-[#06100c]">
+              <Layers3 size={18} />
+            </div>
+
+            <div>
+              <div className="text-sm font-semibold">
+                DECODE
+              </div>
+
+              <div className="text-[9px] uppercase tracking-[0.24em] text-white/30">
+                Document Intelligence
+              </div>
+            </div>
+          </div>
+
+          <div className="hidden items-center gap-3 md:flex">
+            <div className="flex items-center gap-2 rounded-full border border-emerald-300/10 bg-emerald-300/[0.04] px-3 py-1.5 text-[10px] text-emerald-200/70">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+              {isUploading
+                ? "Processing"
+                : "Engine operational"}
+            </div>
+
+            {documentId && (
+              <span className="text-[10px] text-white/25">
+                Live DECODE Pipeline
+              </span>
+            )}
+          </div>
+
+          <button
+            onClick={
+              resetWorkspace
+            }
+            disabled={
+              isUploading
+            }
+            className="flex items-center gap-2 rounded-lg border border-white/[0.07] px-3 py-2 text-xs text-white/50 hover:text-white disabled:opacity-30"
+          >
+            <RefreshCw
+              size={13}
+            />
+            Reset
+          </button>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-[1500px] px-6 py-6">
+        {/* HERO */}
+
+        <section className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0a1a13] p-7 md:p-8">
+          <div
+            className="pointer-events-none absolute inset-0 opacity-40"
+            style={{
+              backgroundImage:
+                "linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px)",
+              backgroundSize:
+                "24px 24px",
+            }}
+          />
+
+          <div className="relative">
+            <div className="mb-5 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300">
+              <Sparkles
+                size={13}
+              />
+              Live intelligence workspace
+            </div>
+
+            <div className="flex flex-col justify-between gap-8 lg:flex-row lg:items-end">
+              <div className="max-w-2xl">
+                <h1 className="text-4xl font-semibold leading-[1.02] tracking-[-0.04em] md:text-5xl">
+                  From document chaos to{" "}
+                  <span className="text-emerald-300">
+                    decision-ready intelligence.
+                  </span>
+                </h1>
+
+                <p className="mt-4 max-w-xl text-sm leading-6 text-white/45">
+                  Upload a real PDF and DECODE
+                  detects, extracts, reconstructs
+                  and turns its visual information
+                  into editable canonical data.
+                </p>
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <Badge
+                    icon={
+                      <ShieldCheck
+                        size={12}
+                      />
+                    }
+                    text="Real extracted data"
+                  />
+
+                  <Badge
+                    icon={
+                      <WandSparkles
+                        size={12}
+                      />
+                    }
+                    text="Editable canonical data"
+                  />
+
+                  <Badge
+                    icon={
+                      <Database
+                        size={12}
+                      />
+                    }
+                    text="Backend connected"
+                  />
+                </div>
+              </div>
+
+              <div className="min-w-[220px] rounded-2xl border border-white/[0.07] bg-black/10 p-4">
+                <div className="text-[9px] uppercase tracking-[0.2em] text-white/30">
+                  Extraction confidence
+                </div>
+
+                <div className="mt-3 text-3xl font-medium">
+                  {metrics.confidence ===
+                  null
+                    ? "—"
+                    : metrics.confidence.toFixed(
+                        1
+                      )}
+
+                  <span className="ml-1 text-sm text-emerald-300">
+                    {metrics.confidence ===
+                    null
+                      ? ""
+                      : "%"}
+                  </span>
+                </div>
+
+                <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+                  <div
+                    className="h-full rounded-full bg-emerald-300 transition-all"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.max(
+                          0,
+                          metrics.confidence ??
+                            0
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* SOURCE */}
+
+        <section className="mt-5">
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="flex flex-1 items-center gap-4 rounded-xl border border-white/[0.07] bg-[#091810] px-5 py-4">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-400/10 text-red-300">
+                <FileText
+                  size={17}
+                />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="text-[9px] uppercase tracking-[0.2em] text-white/30">
+                  Source document
+                </div>
+
+                <div className="mt-1 truncate text-sm text-white/80">
+                  {fileName}
+                </div>
+              </div>
+
+              {documentId && (
+                <div className="hidden items-center gap-1.5 rounded-md bg-emerald-300/10 px-2 py-1 text-[10px] text-emerald-300 sm:flex">
+                  <Check
+                    size={11}
+                  />
+                  Connected
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={
+                triggerFilePicker
+              }
+              disabled={
+                isUploading
+              }
+              className="group flex items-center justify-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-300/[0.04] px-5 py-4 text-sm font-medium text-emerald-300 hover:bg-emerald-300/[0.08] disabled:opacity-50"
+            >
+              {isUploading ? (
+                <Loader2
+                  size={16}
+                  className="animate-spin"
+                />
+              ) : (
+                <Upload
+                  size={16}
+                />
+              )}
+
+              {isUploading
+                ? "Processing..."
+                : "Replace PDF"}
+            </button>
+
+            <input
+              ref={
+                fileInputRef
+              }
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={
+                handleFileSelection
+              }
+              className="hidden"
+            />
+          </div>
+        </section>
+
+        {/* STATUS */}
+
+        {(isUploading ||
+          error ||
+          message) && (
+          <section className="mt-4">
+            {isUploading && (
+              <div className="overflow-hidden rounded-xl border border-emerald-300/10 bg-[#091810]">
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <Loader2
+                    size={16}
+                    className="animate-spin text-emerald-300"
+                  />
+
+                  <div className="flex-1">
+                    <div className="text-xs font-medium text-white/80">
+                      {
+                        processingStage
+                      }
+                    </div>
+
+                    <div className="mt-1 text-[10px] text-white/35">
+                      DECODE is processing the
+                      document and rebuilding
+                      its visual intelligence.
+                    </div>
+                  </div>
+
+                  <span className="text-xs tabular-nums text-emerald-300">
+                    {
+                      uploadProgress
+                    }
+                    %
+                  </span>
+                </div>
+
+                <div className="h-1 bg-white/[0.04]">
+                  <div
+                    className="h-full bg-emerald-300 transition-all"
+                    style={{
+                      width: `${uploadProgress}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="flex items-start gap-3 rounded-xl border border-red-300/10 bg-red-400/[0.04] px-4 py-3 text-sm text-red-200">
+                <AlertCircle
+                  size={16}
+                  className="mt-0.5"
+                />
+
+                <div className="flex-1">
+                  <div className="font-medium">
+                    Extraction failed
+                  </div>
+
+                  <div className="mt-1 text-xs text-red-200/60">
+                    {error}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() =>
+                    setError(
+                      null
+                    )
+                  }
+                >
+                  <X
+                    size={15}
+                  />
+                </button>
+              </div>
+            )}
+
+            {message && (
+              <div className="flex items-center gap-3 rounded-xl border border-emerald-300/10 bg-emerald-300/[0.04] px-4 py-3 text-sm text-emerald-200">
+                <Check
+                  size={16}
+                />
+                {message}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* EXTRACTED ARTIFACTS */}
+
+        {charts.length > 0 && (
+          <section className="mt-5 overflow-hidden rounded-2xl border border-white/[0.07] bg-[#091810]">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <ScanLine
+                    size={14}
+                    className="text-emerald-300"
+                  />
+                  Extracted artifacts
+                </div>
+
+                <div className="mt-1 text-[10px] text-white/30">
+                  {charts.length} chart
+                  {charts.length ===
+                  1
+                    ? ""
+                    : "s"}{" "}
+                  detected from the uploaded PDF
+                </div>
+              </div>
+
+              <div className="text-[10px] text-white/25">
+                Artifact{" "}
+                {Math.max(
+                  1,
+                  charts.findIndex(
+                    (chart) =>
+                      chart.id ===
+                      selectedChartId
+                  ) + 1
+                )}{" "}
+                /{" "}
+                {charts.length}
+              </div>
+            </div>
+
+            <div className="flex gap-3 overflow-x-auto p-4">
+              {charts.map(
+                (
+                  chart,
+                  index
+                ) => {
+                  const active =
+                    chart.id ===
+                    selectedChartId;
+
+                  const valid =
+                    chart.categories
+                      .length >
+                      0 &&
+                    chart.series
+                      .length >
+                      0;
+
+                  return (
+                    <button
+                      key={
+                        chart.id
+                      }
+                      onClick={() =>
+                        selectChart(
+                          chart
+                        )
+                      }
+                      className={`min-w-[180px] rounded-xl border p-4 text-left transition ${
+                        active
+                          ? "border-emerald-300/30 bg-emerald-300/[0.07]"
+                          : "border-white/[0.06] bg-white/[0.015] hover:border-white/[0.12]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-300/[0.08] text-emerald-300">
+                          <BarChart3
+                            size={14}
+                          />
+                        </div>
+
+                        <span className="text-[9px] text-white/25">
+                          #{index +
+                            1}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 truncate text-xs font-medium text-white/75">
+                        {
+                          chart.title
+                        }
+                      </div>
+
+                      <div className="mt-2 text-[9px] uppercase tracking-[0.15em] text-white/25">
+                        {
+                          chart.chartType
+                        }
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between text-[9px]">
+                        <span className="text-white/30">
+                          {
+                            chart
+                              .categories
+                              .length
+                          }{" "}
+                          categories
+                        </span>
+
+                        <span
+                          className={
+                            valid
+                              ? "text-emerald-300"
+                              : "text-amber-300"
+                          }
+                        >
+                          {valid
+                            ? "Ready"
+                            : "No data"}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                }
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* METRICS */}
+
+        <section className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard
+            icon={
+              <Layers3
+                size={15}
+              />
+            }
+            label="Charts detected"
+            value={String(
+              metrics.artifacts
+            )}
+            sub="From real backend extraction"
+          />
+
+          <MetricCard
+            icon={
+              <FileChartColumn
+                size={15}
+              />
+            }
+            label="Categories"
+            value={String(
+              metrics.categories
+            )}
+            sub={
+              selectedChart
+                ? "Current extracted chart"
+                : "No chart selected"
+            }
+          />
+
+          <MetricCard
+            icon={
+              <Activity
+                size={15}
+              />
+            }
+            label="Data points"
+            value={String(
+              metrics.dataPoints
+            )}
+            sub={
+              activeSeries.length
+                ? `${activeSeries.length} extracted series`
+                : "Awaiting extraction"
+            }
+          />
+
+          <MetricCard
+            icon={
+              <ShieldCheck
+                size={15}
+              />
+            }
+            label="Confidence"
+            value={
+              metrics.confidence ===
+              null
+                ? "—"
+                : `${metrics.confidence.toFixed(
+                    1
+                  )}%`
+            }
+            sub="Backend extraction confidence"
+          />
+        </section>
+
+        {/* MAIN WORKSPACE */}
+
+        <section className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_270px]">
+          {/* CHART */}
+
+          <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#091810]">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <span className="h-2 w-2 rounded-full bg-emerald-300" />
+
+                  {selectedChart
+                    ? selectedChart.title
+                    : "Extracted chart preview"}
+                </div>
+
+                <div className="mt-1 text-[10px] text-white/30">
+                  {selectedChart
+                    ? `Canonical reconstruction · ${
+                        selectedChart.chartType
+                      }`
+                    : "Upload a PDF to begin"}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={
+                    undo
+                  }
+                  disabled={
+                    history.length ===
+                    0
+                  }
+                  className="rounded-lg p-2 text-white/30 hover:bg-white/[0.04] hover:text-white disabled:opacity-20"
+                >
+                  <RotateCcw
+                    size={14}
+                  />
+                </button>
+
+                <button
+                  onClick={
+                    redo
+                  }
+                  disabled={
+                    future.length ===
+                    0
+                  }
+                  className="rounded-lg p-2 text-white/30 hover:bg-white/[0.04] hover:text-white disabled:opacity-20"
+                >
+                  <RotateCw
+                    size={14}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* CHART TYPES */}
+
+            <div className="flex flex-wrap gap-2 border-b border-white/[0.05] px-5 py-4">
+              {CHART_MODES.map(
+                (mode) => (
+                  <ChartButton
+                    key={
+                      mode
+                    }
+                    active={
+                      chartMode ===
+                      mode
+                    }
+                    label={
+                      mode
+                        .charAt(
+                          0
+                        )
+                        .toUpperCase() +
+                      mode.slice(
+                        1
+                      )
+                    }
+                    onClick={() =>
+                      setChartMode(
+                        mode
+                      )
+                    }
+                  />
+                )
+              )}
+            </div>
+
+            {/* PREVIEW */}
+
+            <div className="h-[430px] px-5 py-5">
+              {renderChart()}
+            </div>
+
+            {/* SERIES */}
+
+            {activeSeries.length >
+              0 && (
+              <div className="flex flex-wrap items-center justify-center gap-2 border-t border-white/[0.05] px-5 py-4">
+                {activeSeries.map(
+                  (
+                    series,
+                    index
+                  ) => (
+                    <div
+                      key={
+                        series.id
+                      }
+                      className="flex items-center gap-2 rounded-lg border border-white/[0.05] px-3 py-1.5 text-[10px] text-white/50"
+                    >
+                      <span
+                        className="h-2 w-2 rounded-full"
+                        style={{
+                          background:
+                            SERIES_COLORS[
+                              index %
+                                SERIES_COLORS.length
+                            ],
+                        }}
+                      />
+
+                      {
+                        series.name
+                      }
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* INSPECTOR */}
+
+          <aside className="space-y-3">
+            <div className="rounded-2xl border border-white/[0.07] bg-[#091810] p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold">
+                    Inspector
+                  </div>
+
+                  <div className="mt-1 text-[10px] text-white/30">
+                    Real extraction metadata
+                  </div>
+                </div>
+
+                <ChevronDown
+                  size={15}
+                  className="text-white/30"
+                />
+              </div>
+
+              <InspectorValue
+                label="Chart type"
+                value={
+                  selectedChart
+                    ? chartMode.toUpperCase()
+                    : "—"
+                }
+              />
+
+              <InspectorValue
+                label="Categories"
+                value={String(
+                  metrics.categories
+                )}
+              />
+
+              <InspectorValue
+                label="Series"
+                value={String(
+                  activeSeries.length
+                )}
+              />
+
+              <InspectorValue
+                label="Data points"
+                value={String(
+                  metrics.dataPoints
+                )}
+              />
+
+              <InspectorValue
+                label="Confidence"
+                value={
+                  selectedChart?.confidence ===
+                  null ||
+                  selectedChart?.confidence ===
+                    undefined
+                    ? "—"
+                    : `${selectedChart.confidence.toFixed(
+                        1
+                      )}%`
+                }
+                accent
+              />
+
+              <div className="mt-5 rounded-xl border border-emerald-300/10 bg-emerald-300/[0.025] p-3">
+                <div className="flex items-center justify-between text-[9px] uppercase tracking-[0.16em] text-white/30">
+                  <span>
+                    Canonical integrity
+                  </span>
+
+                  <span className="text-emerald-300">
+                    {selectedChart &&
+                    activeSeries.length >
+                      0
+                      ? "Verified"
+                      : "Awaiting data"}
+                  </span>
+                </div>
+
+                <div className="mt-2 h-1 rounded-full bg-white/[0.05]">
+                  <div
+                    className="h-full rounded-full bg-emerald-300 transition-all"
+                    style={{
+                      width:
+                        selectedChart &&
+                        activeSeries.length >
+                          0
+                          ? "100%"
+                          : "0%",
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/[0.07] bg-[#091810] p-5">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <ScanLine
+                  size={15}
+                  className="text-emerald-300"
+                />
+                Pipeline status
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <PipelineItem
+                  label="PDF ingestion"
+                  detail={
+                    documentId
+                      ? "Completed"
+                      : "Waiting"
+                  }
+                  done={
+                    Boolean(
+                      documentId
+                    )
+                  }
+                />
+
+                <PipelineItem
+                  label="Artifact detection"
+                  detail={
+                    charts.length
+                      ? `${charts.length} charts detected`
+                      : "Waiting"
+                  }
+                  done={
+                    charts.length >
+                    0
+                  }
+                />
+
+                <PipelineItem
+                  label="Data extraction"
+                  detail={
+                    selectedChart &&
+                    activeSeries.length
+                      ? "Canonical data available"
+                      : "Waiting"
+                  }
+                  done={
+                    Boolean(
+                      selectedChart &&
+                        activeSeries.length
+                    )
+                  }
+                />
+
+                <PipelineItem
+                  label="Visualization"
+                  detail={
+                    selectedChart &&
+                    rows.length
+                      ? "Interactive preview ready"
+                      : "Waiting"
+                  }
+                  done={
+                    Boolean(
+                      selectedChart &&
+                        rows.length
+                    )
+                  }
+                />
+
+                <PipelineItem
+                  label="Editable output"
+                  detail={
+                    selectedChart &&
+                    rows.length
+                      ? "Ready for editing"
+                      : "Waiting"
+                  }
+                  done={
+                    Boolean(
+                      selectedChart &&
+                        rows.length
+                    )
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.025] p-5">
+              <div className="flex gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-300/10 text-emerald-300">
+                  <WandSparkles
+                    size={15}
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold">
+                    Why this matters
+                  </div>
+
+                  <p className="mt-2 text-[10px] leading-5 text-white/35">
+                    DECODE does not replace
+                    extracted information with
+                    demo values. Every preview is
+                    generated from the selected
+                    artifact returned by the live
+                    pipeline.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        {/* EDITOR */}
+
+        <section className="mt-3 overflow-hidden rounded-2xl border border-white/[0.07] bg-[#091810]">
+          <div className="flex flex-col justify-between gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Table2
+                  size={14}
+                  className="text-emerald-300"
+                />
+                Extracted data editor
+              </div>
+
+              <div className="mt-1 text-[10px] text-white/30">
+                Edit the actual reconstructed
+                values and watch the preview
+                update instantly.
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={
+                  addSeries
+                }
+                disabled={
+                  !selectedChart
+                }
+                className="flex items-center gap-1.5 rounded-lg border border-emerald-300/15 bg-emerald-300/[0.05] px-3 py-2 text-[11px] text-emerald-300 disabled:opacity-30"
+              >
+                <Plus
+                  size={13}
+                />
+                Add series
+              </button>
+
+              <button
+                onClick={
+                  addRow
+                }
+                disabled={
+                  !selectedChart
+                }
+                className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] px-3 py-2 text-[11px] text-white/50 disabled:opacity-30"
+              >
+                <Plus
+                  size={13}
+                />
+                Add row
+              </button>
+            </div>
+          </div>
+
+          {rows.length ===
+            0 ||
+          activeSeries.length ===
+            0 ? (
+            <div className="flex min-h-[220px] items-center justify-center px-5">
+              <div className="text-center">
+                <Table2
+                  size={22}
+                  className="mx-auto text-white/15"
+                />
+
+                <div className="mt-3 text-sm text-white/45">
+                  No extracted data yet
+                </div>
+
+                <div className="mt-1 text-xs text-white/20">
+                  Upload a PDF containing a chart
+                  to populate this editor.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-left">
+                  <thead>
+                    <tr className="border-b border-white/[0.05] text-[9px] uppercase tracking-[0.16em] text-white/25">
+                      <th className="px-5 py-3 font-medium">
+                        Category
+                      </th>
+
+                      {activeSeries.map(
+                        (
+                          series
+                        ) => (
+                          <th
+                            key={
+                              series.id
+                            }
+                            className="px-5 py-3 font-medium"
+                          >
+                            {
+                              series.name
+                            }
+                          </th>
+                        )
+                      )}
+
+                      <th className="px-5 py-3 text-right font-medium">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {rows.map(
+                      (
+                        row,
+                        rowIndex
+                      ) => (
+                        <tr
+                          key={`${row.category}-${rowIndex}`}
+                          className="border-b border-white/[0.04] hover:bg-white/[0.015]"
+                        >
+                          <td className="px-5 py-3">
+                            <input
+                              value={
+                                row.category
+                              }
+                              onChange={(
+                                event
+                              ) =>
+                                updateCategory(
+                                  rowIndex,
+                                  event
+                                    .target
+                                    .value
+                                )
+                              }
+                              className="w-full bg-transparent text-xs text-white/80 outline-none"
+                            />
+                          </td>
+
+                          {activeSeries.map(
+                            (
+                              series
+                            ) => (
+                              <td
+                                key={
+                                  series.id
+                                }
+                                className="px-5 py-3"
+                              >
+                                <input
+                                  type="number"
+                                  value={
+                                    row
+                                      .values[
+                                      series.id
+                                    ] ??
+                                    0
+                                  }
+                                  onChange={(
+                                    event
+                                  ) =>
+                                    updateCell(
+                                      rowIndex,
+                                      series.id,
+                                      event
+                                        .target
+                                        .value
+                                    )
+                                  }
+                                  className="w-full bg-transparent text-xs text-white/80 outline-none"
+                                />
+                              </td>
+                            )
+                          )}
+
+                          <td className="px-5 py-3 text-right">
+                            <button
+                              onClick={() =>
+                                removeRow(
+                                  rowIndex
+                                )
+                              }
+                              disabled={
+                                rows.length <=
+                                1
+                              }
+                              className="rounded-md p-1.5 text-white/20 hover:bg-red-400/10 hover:text-red-300 disabled:opacity-20"
+                            >
+                              <Trash2
+                                size={13}
+                              />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex flex-wrap gap-2 px-5 py-4">
+                <button
+                  onClick={
+                    exportCSV
+                  }
+                  className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] px-3 py-2 text-[11px] text-white/45 hover:text-white"
+                >
+                  <Download
+                    size={13}
+                  />
+                  Export CSV
+                </button>
+
+                <button
+                  onClick={
+                    copyConfig
+                  }
+                  className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] px-3 py-2 text-[11px] text-white/45 hover:text-white"
+                >
+                  <Copy
+                    size={13}
+                  />
+                  Copy config
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+
+        <footer className="flex flex-col justify-between gap-3 px-2 py-8 text-[10px] text-white/20 sm:flex-row">
+          <div className="flex items-center gap-2">
+            <Database
+              size={12}
+            />
+            DECODE · Live document intelligence
+          </div>
+
+          <div>
+            PDF → Detection → Extraction → Canonical Data → Visualization → Edit → Export
+          </div>
+        </footer>
+      </div>
+    </main>
+  );
+}
+
+/* ============================================================
+   SMALL COMPONENTS
+   ============================================================ */
+
+function Badge({
+  icon,
+  text,
+}: {
+  icon: React.ReactNode;
+  text: string;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 rounded-full border border-white/[0.07] px-3 py-1.5 text-[10px] text-white/40">
+      {icon}
+      {text}
+    </div>
+  );
+}
+
+function MetricCard({
+  icon,
+  label,
+  value,
+  sub,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub: string;
+}) {
+  return (
+    <div className="rounded-xl border border-white/[0.07] bg-[#091810] p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] uppercase tracking-[0.18em] text-white/30">
+          {label}
+        </span>
+
+        <span className="text-emerald-300/70">
+          {icon}
+        </span>
+      </div>
+
+      <div className="mt-3 text-xl font-medium tracking-tight">
+        {value}
+      </div>
+
+      <div className="mt-1 text-[9px] text-white/25">
+        {sub}
+      </div>
+    </div>
+  );
+}
+
+function ChartButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={
+        onClick
+      }
+      className={`rounded-lg border px-3 py-2 text-[11px] transition ${
+        active
+          ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-300"
+          : "border-white/[0.05] bg-white/[0.01] text-white/35 hover:border-white/[0.1] hover:text-white/70"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function InspectorValue({
+  label,
+  value,
+  accent = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className="mt-4 flex items-center justify-between border-t border-white/[0.05] pt-4">
+      <span className="text-[10px] text-white/30">
+        {label}
+      </span>
+
+      <span
+        className={`text-[10px] font-semibold ${
+          accent
+            ? "text-emerald-300"
+            : "text-white/70"
+        }`}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function PipelineItem({
+  label,
+  detail,
+  done,
+}: {
+  label: string;
+  detail: string;
+  done: boolean;
+}) {
+  return (
+    <div className="flex gap-3">
+      <div
+        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+          done
+            ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-300"
+            : "border-white/10 text-white/20"
+        }`}
+      >
+        {done && (
+          <Check
+            size={10}
+          />
+        )}
+      </div>
+
+      <div>
+        <div className="text-[10px] text-white/60">
+          {label}
+        </div>
+
+        <div className="mt-0.5 text-[9px] text-white/25">
+          {detail}
+        </div>
+      </div>
+    </div>
+  );
+}

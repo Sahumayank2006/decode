@@ -1,0 +1,31 @@
+{
+  "document": "C:\\Users\\licsa\\Downloads\\decode-main\\decode-main\\DECODE_backend\\backend\\tests\\corpus\\basic\\basic_charts.pdf",
+  "success": true,
+  "charts_detected": 1,
+  "tables_detected": 0,
+  "pages": 4,
+  "total_duration_seconds": 31.44485800000257,
+  "artifacts": [
+    {
+      "artifact_id": "d746b838-60b1-4967-938a-3c01f4f04161",
+      "artifact_type": "chart",
+      "extraction_success": true,
+      "canonical_success": true,
+      "visualization_success": true,
+      "svg_success": true,
+      "png_success": true,
+      "numerical_integrity": false,
+      "deterministic": false,
+      "success": true,
+      "detected_type": "chart",
+      "recommended_type": "chart",
+      "confidence": 0.0,
+      "warnings": [],
+      "errors": [],
+      "metadata": {}
+    }
+  ],
+  "warnings": [],
+  "errors": [],
+  "metadata": {}
+}

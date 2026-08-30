@@ -1,0 +1,49 @@
+{
+  "document": "C:\\Users\\licsa\\Downloads\\decode-main\\decode-main\\DECODE_backend\\backend\\tests\\corpus\\research_papers\\research_style.pdf",
+  "success": true,
+  "charts_detected": 2,
+  "tables_detected": 0,
+  "pages": 1,
+  "total_duration_seconds": 28.525240799994208,
+  "artifacts": [
+    {
+      "artifact_id": "0a6805ef-95a9-4df0-befc-5c0f7e7e6aaa",
+      "artifact_type": "chart",
+      "extraction_success": true,
+      "canonical_success": true,
+      "visualization_success": true,
+      "svg_success": true,
+      "png_success": true,
+      "numerical_integrity": false,
+      "deterministic": false,
+      "success": true,
+      "detected_type": "chart",
+      "recommended_type": "chart",
+      "confidence": 0.0,
+      "warnings": [],
+      "errors": [],
+      "metadata": {}
+    },
+    {
+      "artifact_id": "799e3d6a-7f7a-4f21-a34b-0b0bc714208f",
+      "artifact_type": "chart",
+      "extraction_success": true,
+      "canonical_success": true,
+      "visualization_success": true,
+      "svg_success": true,
+      "png_success": true,
+      "numerical_integrity": false,
+      "deterministic": false,
+      "success": true,
+      "detected_type": "chart",
+      "recommended_type": "chart",
+      "confidence": 0.0,
+      "warnings": [],
+      "errors": [],
+      "metadata": {}
+    }
+  ],
+  "warnings": [],
+  "errors": [],
+  "metadata": {}
+}

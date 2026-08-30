@@ -1,0 +1,31 @@
+{
+  "document": "C:\\Users\\licsa\\Downloads\\decode-main\\decode-main\\DECODE_backend\\backend\\tests\\corpus\\difficult\\difficult_values.pdf",
+  "success": true,
+  "charts_detected": 1,
+  "tables_detected": 0,
+  "pages": 2,
+  "total_duration_seconds": 28.934611199976644,
+  "artifacts": [
+    {
+      "artifact_id": "efe4996a-536e-4de4-9e7f-7ad92ffe33aa",
+      "artifact_type": "chart",
+      "extraction_success": true,
+      "canonical_success": true,
+      "visualization_success": true,
+      "svg_success": true,
+      "png_success": true,
+      "numerical_integrity": false,
+      "deterministic": false,
+      "success": true,
+      "detected_type": "chart",
+      "recommended_type": "chart",
+      "confidence": 0.0,
+      "warnings": [],
+      "errors": [],
+      "metadata": {}
+    }
+  ],
+  "warnings": [],
+  "errors": [],
+  "metadata": {}
+}

@@ -1,7 +1,7 @@
 import React, { useRef, useMemo, useCallback } from 'react';
-import { useChartStore } from '../../store/useChartStore';
+import { CanonicalChart, useChartStore } from '../../store/useChartStore';
 import { ChartTableEditor } from './ChartTableEditor';
-import { ChartTypeSwitcher } from './ChartTypeSwitcher';
+import ChartTypeSwitcher from './ChartTypeSwitcher';
 import { toPng, toSvg } from 'html-to-image';
 import { Download, AlertCircle, RefreshCw } from 'lucide-react';
 import {
@@ -10,12 +10,40 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
-interface ChartRendererProps {
-  chartId: string;
+function getCellValue(
+  row: Record<string, unknown>,
+  key: string
+): string | number | null {
+  const value = row[key];
+
+  if (
+    typeof value === "string" ||
+    typeof value === "number"
+  ) {
+    return value;
+  }
+
+  return null;
 }
 
-export function ChartRenderer({ chartId }: ChartRendererProps) {
-  const chart = useChartStore((state) => state.charts[chartId]);
+interface Props {
+  chart?: CanonicalChart;
+  chartId?: string;
+}
+
+export function ChartRenderer({
+  chart: chartProp,
+  chartId,
+}: Props) {
+  const store = useChartStore();
+
+  const chart =
+    chartProp ||
+    (chartId && store.charts
+      ? store.charts[chartId]
+      : undefined) ||
+    store.chart;
+
   const chartRef = useRef<HTMLDivElement>(null);
 
   const handleExportPNG = useCallback(() => {
@@ -36,8 +64,7 @@ export function ChartRenderer({ chartId }: ChartRendererProps) {
   const rechartsData = useMemo(() => {
     if (!chart) return [];
     return chart.data.map(d => ({
-      category: d.category,
-      ...d.values
+      ...d
     }));
   }, [chart]);
 
@@ -64,12 +91,12 @@ export function ChartRenderer({ chartId }: ChartRendererProps) {
   }
 
   // Handle Table explicitly first as it's not a Recharts component
-  if (chart.activeType === 'table') {
+    if (chart.activeType === 'table') {
     return (
       <div className="flex flex-col gap-2 w-full h-full">
-        <ChartTypeSwitcher chartId={chartId} />
+        <ChartTypeSwitcher chart={chart} />
         <div className="flex-1 min-h-[400px]">
-          <ChartTableEditor chartId={chartId} />
+          <ChartTableEditor chart={chart} />
         </div>
       </div>
     );
@@ -127,10 +154,13 @@ export function ChartRenderer({ chartId }: ChartRendererProps) {
         const targetSeries = chart.series[0];
         
         // Map the specific series data for Recharts Pie
-        const pieData = chart.data.map(d => ({
-          name: d.category,
-          value: d.values[targetSeries.id] !== null ? Number(d.values[targetSeries.id]) : 0
-        })).filter(d => d.value !== 0 && !isNaN(d.value));
+        const pieData = chart.data.map(d => {
+          const val = getCellValue(d as Record<string, unknown>, targetSeries.id);
+          return {
+            name: d.category,
+            value: val !== null ? Number(val) : 0
+          };
+        }).filter(d => d.value !== 0 && !isNaN(d.value));
 
         // Distinct colors for pie slices since they represent categories, not series
         const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
@@ -172,8 +202,8 @@ export function ChartRenderer({ chartId }: ChartRendererProps) {
         // Format data: { x: val1, y: val2, name: category }
         const scatterData = chart.data.map(d => ({
           name: d.category,
-          x: d.values[xSeries.id],
-          y: d.values[ySeries.id]
+          x: getCellValue(d as Record<string, unknown>, xSeries.id),
+          y: getCellValue(d as Record<string, unknown>, ySeries.id)
         })).filter(d => d.x !== null && d.y !== null);
 
         return (
@@ -208,7 +238,7 @@ export function ChartRenderer({ chartId }: ChartRendererProps) {
 
   return (
     <div className="flex flex-col gap-2 w-full h-full">
-      <ChartTypeSwitcher chartId={chartId} />
+      <ChartTypeSwitcher chart={chart} />
       
       <div className="flex flex-col flex-1 bg-white dark:bg-zinc-950 rounded-lg shadow-sm border border-gray-200 dark:border-zinc-800 min-h-[400px] overflow-hidden relative">
         <div className="flex justify-between items-center p-3 border-b border-gray-200 dark:border-zinc-800">

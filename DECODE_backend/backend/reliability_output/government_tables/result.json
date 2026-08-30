@@ -1,0 +1,31 @@
+{
+  "document": "C:\\Users\\licsa\\Downloads\\decode-main\\decode-main\\DECODE_backend\\backend\\tests\\corpus\\government\\government_tables.pdf",
+  "success": true,
+  "charts_detected": 0,
+  "tables_detected": 1,
+  "pages": 1,
+  "total_duration_seconds": 41.755508799979,
+  "artifacts": [
+    {
+      "artifact_id": "1b631a0f-efb9-441a-8608-5b032b1f398d",
+      "artifact_type": "table",
+      "extraction_success": true,
+      "canonical_success": true,
+      "visualization_success": true,
+      "svg_success": true,
+      "png_success": false,
+      "numerical_integrity": false,
+      "deterministic": false,
+      "success": true,
+      "detected_type": "table",
+      "recommended_type": "table",
+      "confidence": 0.95,
+      "warnings": [],
+      "errors": [],
+      "metadata": {}
+    }
+  ],
+  "warnings": [],
+  "errors": [],
+  "metadata": {}
+}

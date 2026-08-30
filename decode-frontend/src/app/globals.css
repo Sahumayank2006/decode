@@ -1,236 +1,287 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   DECODE V4 — Flagship Scientific Platform Design System
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* =========================================================
+   DECODE DESIGN SYSTEM
+   ========================================================= */
 
-@theme inline {
-  /* ── Core Navy System ─────────────────────────────────────────────────── */
-  --color-navy-950: #020617;
-  --color-navy-900: #0a0f1c;
-  --color-navy-800: #0f172a;
-  --color-navy-700: #1e293b;
-  --color-navy-600: #334155;
+:root {
+  --decode-bg: #07110d;
+  --decode-bg-soft: #0b1712;
+  --decode-panel: #0e1d17;
+  --decode-panel-2: #12251d;
 
-  /* ── Brand Blues ───────────────────────────────────────────────────────── */
-  --color-brand: #2563eb;
-  --color-brand-light: #3b82f6;
-  --color-brand-dark: #1d4ed8;
-  --color-brand-deep: #1e3a8a;
+  --decode-green: #72f0a8;
+  --decode-green-strong: #39d978;
+  --decode-green-soft: rgba(114, 240, 168, 0.12);
 
-  /* ── Accents ──────────────────────────────────────────────────────────── */
-  --color-accent-cyan: #06b6d4;
-  --color-accent-cyan-muted: #0891b2;
-  --color-accent-violet: #6366f1;
+  --decode-text: #f3f8f4;
+  --decode-muted: #9cafa3;
+  --decode-border: rgba(255, 255, 255, 0.09);
 
-  /* ── Light Surfaces ───────────────────────────────────────────────────── */
-  --color-light-bg: #f8fafc;
-  --color-light-surface: #f1f5f9;
-  --color-light-border: #e2e8f0;
-
-  /* ── Text ─────────────────────────────────────────────────────────────── */
-  --color-text-white: #f8fafc;
-  --color-text-light: #e2e8f0;
-  --color-text-muted: #94a3b8;
-  --color-text-dark: #0f172a;
-  --color-text-dark-muted: #475569;
-
-  /* ── Status ───────────────────────────────────────────────────────────── */
-  --color-risk-low: #10b981;
-  --color-risk-medium: #f59e0b;
-  --color-risk-high: #ef4444;
-
-  /* ── Typography ───────────────────────────────────────────────────────── */
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-display: 'Newsreader', Georgia, serif;
-  --font-body: 'IBM Plex Sans', -apple-system, sans-serif;
-  --font-mono: 'IBM Plex Mono', monospace;
-
-  /* ── Landing Page Colors ──────────────────────────────────────────────── */
-  --color-ink: #0B1E33;
-  --color-ink-soft: #132C4A;
-  --color-paper: #F7F4EC;
-  --color-paper-dim: #EFEADA;
-  --color-paper-line: #D9D2BC;
-  --color-seal-blue: #1D4E89;
-  --color-seal-blue-deep: #123A5F;
-  --color-verified-green: #2F6F4E;
-  --color-brass: #B08D57;
-  --color-brass-light: #D8BE8E;
-  --color-graphite: #20232A;
-  --color-graphite-soft: #565A61;
-  --color-danger: #8C3B2E;
-
-  /* ── Easing ───────────────────────────────────────────────────────────── */
-  --ease-stamp: cubic-bezier(.2, 1.4, .4, 1);
+  --color-paper: #07110d;
+  --color-graphite: #f3f8f4;
 }
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   BASE RESET
-   ═══════════════════════════════════════════════════════════════════════════ */
 
 * {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 html {
+  min-height: 100%;
+  background: var(--decode-bg);
   scroll-behavior: smooth;
 }
 
 body {
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  color: var(--color-text-white);
-  background: var(--color-navy-900);
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at 15% 10%,
+      rgba(57, 217, 120, 0.08),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 85% 20%,
+      rgba(114, 240, 168, 0.05),
+      transparent 25%
+    ),
+    var(--decode-bg);
+  color: var(--decode-text);
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
+/* =========================================================
+   SELECTION
+   ========================================================= */
+
+::selection {
+  background: rgba(114, 240, 168, 0.25);
+  color: white;
+}
+
+/* =========================================================
    SCROLLBAR
-   ═══════════════════════════════════════════════════════════════════════════ */
+   ========================================================= */
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--color-navy-950); }
-::-webkit-scrollbar-thumb { background: var(--color-navy-600); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   SCIENTIFIC BACKGROUNDS
-   ═══════════════════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar-track {
+  background: #07110d;
+}
 
-.bg-grid-dark {
+::-webkit-scrollbar-thumb {
+  background: #1e3c2c;
+  border-radius: 999px;
+  border: 2px solid #07110d;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2e6548;
+}
+
+/* =========================================================
+   COMMON DECODE UTILITIES
+   ========================================================= */
+
+.decode-grid {
   background-image:
-    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
-  background-size: 60px 60px;
+    linear-gradient(
+      rgba(255, 255, 255, 0.025) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.025) 1px,
+      transparent 1px
+    );
+  background-size: 32px 32px;
 }
 
-.bg-grid-light {
-  background-image:
-    linear-gradient(rgba(0,0,0,0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,0,0,0.04) 1px, transparent 1px);
-  background-size: 60px 60px;
+.decode-glass {
+  background: rgba(14, 29, 23, 0.76);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--decode-border);
 }
 
-.bg-dots {
-  background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);
-  background-size: 24px 24px;
+.decode-panel {
+  background:
+    linear-gradient(
+      145deg,
+      rgba(18, 37, 29, 0.96),
+      rgba(9, 20, 15, 0.96)
+    );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
+.decode-glow {
+  box-shadow:
+    0 0 0 1px rgba(114, 240, 168, 0.12),
+    0 0 40px rgba(57, 217, 120, 0.08);
+}
+
+/* =========================================================
    ANIMATIONS
-   ═══════════════════════════════════════════════════════════════════════════ */
+   ========================================================= */
 
-@keyframes scan {
-  0%   { top: 0%;   opacity: 0; }
-  5%   { opacity: 0.8; }
-  95%  { opacity: 0.8; }
-  100% { top: 100%; opacity: 0; }
+@keyframes decode-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
 }
 
-.scan-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--color-accent-cyan), transparent);
-  box-shadow: 0 0 20px var(--color-accent-cyan), 0 0 60px rgba(6,182,212,0.3);
-  animation: scan 4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  pointer-events: none;
+@keyframes decode-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
 }
 
-@keyframes pulse-glow {
-  0%, 100% { opacity: 0.4; }
-  50%      { opacity: 1; }
+@keyframes decode-shimmer {
+  0% {
+    background-position: -500px 0;
+  }
+
+  100% {
+    background-position: 500px 0;
+  }
 }
 
-.pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
+.decode-pulse {
+  animation: decode-pulse 2s ease-in-out infinite;
 }
 
-@keyframes float-up {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-8px); }
+.decode-float {
+  animation: decode-float 4s ease-in-out infinite;
 }
 
-.float-up {
-  animation: float-up 6s ease-in-out infinite;
+/* =========================================================
+   GOLDEN LUXURY ANIMATIONS
+   ========================================================= */
+
+@keyframes gold-shine {
+  0% {
+    transform: translateX(-150%) skewX(-20deg);
+  }
+  35%, 100% {
+    transform: translateX(250%) skewX(-20deg);
+  }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   SCORE RING
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.score-ring {
-  transform: rotate(-90deg);
-}
-.score-ring circle {
-  transition: stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+@keyframes gold-pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(223, 183, 108, 0.4), 0 8px 30px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.8), inset 0 -2px 4px rgba(120, 80, 15, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 35px rgba(247, 219, 140, 0.7), 0 12px 35px rgba(0, 0, 0, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.95), inset 0 -2px 4px rgba(120, 80, 15, 0.45);
+  }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   REDUCED MOTION
-   ═══════════════════════════════════════════════════════════════════════════ */
+.animate-gold-shine {
+  animation: gold-shine 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.animate-gold-pulse {
+  animation: gold-pulse-glow 3s ease-in-out infinite;
+}
+
+/* =========================================================
+   FORM CONTROLS
+   ========================================================= */
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+}
+
+/* =========================================================
+   RECHARTS
+   ========================================================= */
+
+.recharts-wrapper {
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+
+.recharts-cartesian-axis-tick-value {
+  fill: #8ea397;
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: rgba(255, 255, 255, 0.06);
+}
+
+.recharts-tooltip-wrapper {
+  outline: none;
+}
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 900px) {
+  body {
+    overflow-x: hidden;
+  }
+}
+
+@media (max-width: 640px) {
+  .decode-grid {
+    background-size: 24px 24px;
+  }
+}
+
+/* =========================================================
+   ACCESSIBILITY
+   ========================================================= */
 
 @media (prefers-reduced-motion: reduce) {
-  .scan-line,
-  .pulse-glow,
-  .float-up {
-    animation: none !important;
-  }
-  * {
-    transition-duration: 0.01ms !important;
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
 }
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   NEW LANDING PAGE UTILITIES & ANIMATIONS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* Stamp Animation */
-@keyframes stampDown {
-  0% { opacity: 0; transform: rotate(-11deg) scale(1.9); }
-  60% { opacity: 1; }
-  100% { opacity: 1; transform: rotate(-11deg) scale(1); }
-}
-.animate-stampDown {
-  animation: stampDown 0.7s var(--ease-stamp) forwards;
-}
-
-/* Ring Fill Animation */
-@keyframes ringFill {
-  to { stroke-dashoffset: 60; }
-}
-.animate-ringFill {
-  animation: ringFill 1.6s var(--ease-stamp) 0.3s forwards;
-}
-
-/* Engine Scanline Animation */
-@keyframes engineScan {
-  0% { top: 18%; opacity: 0; }
-  10% { opacity: 1; }
-  50% { top: 78%; opacity: 1; }
-  60% { opacity: 0; }
-  100% { top: 18%; opacity: 0; }
-}
-.animate-engineScan {
-  animation: engineScan 2.6s ease-in-out infinite;
-}
-
-/* Reveal Utilities */
-.reveal {
-  transition: opacity 0.7s ease, transform 0.7s ease;
-}
-.reveal-armed {
-  opacity: 0;
-  transform: translateY(18px);
-}
-.reveal-armed.in {
-  opacity: 1;
-  transform: translateY(0);
-}
-

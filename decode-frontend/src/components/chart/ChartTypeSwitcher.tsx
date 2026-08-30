@@ -1,65 +1,123 @@
-import React from 'react';
-import { CanonicalChart, ChartRenderType, useChartStore } from '../../store/useChartStore';
-import { getValidChartTypes } from '../../lib/chartUtils';
-import { BarChart, LineChart, PieChart, ScatterChart, Radar, Table, Activity, Layers, Circle } from 'lucide-react'; 
+"use client";
 
-const TYPE_ICONS: Record<ChartRenderType, React.ReactNode> = {
-  bar: <BarChart size={16} />,
-  stacked_bar: <Layers size={16} />,
-  line: <LineChart size={16} />,
-  area: <Activity size={16} />,
-  pie: <PieChart size={16} />,
-  donut: <Circle size={16} />,
-  scatter: <ScatterChart size={16} />,
-  radar: <Radar size={16} />,
-  table: <Table size={16} />,
-};
+import React from "react";
+import {
+  BarChart3,
+  LineChart,
+  PieChart,
+  AreaChart,
+  Radar,
+  Layers3,
+} from "lucide-react";
 
-interface ChartTypeSwitcherProps {
-  chartId: string;
+import {
+  CanonicalChart,
+  ChartRenderType,
+  useChartStore,
+} from "../../store/useChartStore";
+
+import { getValidChartTypes } from "../../lib/chartUtils";
+
+/* ============================================================
+   PROPS
+   ============================================================ */
+
+interface Props {
+  chart?: CanonicalChart;
 }
 
-export function ChartTypeSwitcher({ chartId }: ChartTypeSwitcherProps) {
-  const chart = useChartStore((state) => state.charts[chartId]);
-  const setActiveType = useChartStore((state) => state.setActiveType);
+/* ============================================================
+   ICON MAP
+   ============================================================ */
 
-  if (!chart) return null;
+const ICONS: Record<string, React.ReactNode> = {
+  bar: <BarChart3 size={17} />,
+  line: <LineChart size={17} />,
+  pie: <PieChart size={17} />,
+  donut: <PieChart size={17} />,
+  area: <AreaChart size={17} />,
+  stacked_bar: <Layers3 size={17} />,
+  radar: <Radar size={17} />,
+};
 
-  const validTypes = getValidChartTypes(chart);
+/* ============================================================
+   LABELS
+   ============================================================ */
+
+const LABELS: Record<string, string> = {
+  bar: "Bar",
+  line: "Line",
+  pie: "Pie",
+  donut: "Donut",
+  area: "Area",
+  stacked_bar: "Stacked",
+  radar: "Radar",
+};
+
+/* ============================================================
+   COMPONENT
+   ============================================================ */
+
+export function ChartTypeSwitcher({ chart }: Props) {
+  const { charts, chart: storeChart, activeChartId, setChartType, updateChart } = useChartStore();
+
+  const activeChart =
+    chart ||
+    storeChart ||
+    (charts && activeChartId
+      ? charts[activeChartId]
+      : undefined);
+
+  if (!activeChart) {
+    return null;
+  }
+
+  const activeType =
+    activeChart.activeType ||
+    activeChart.chart_type ||
+    "bar";
+
+  const validTypes = getValidChartTypes(activeChart);
+
+  const setType = (type: ChartRenderType) => {
+    if (typeof setChartType === "function") {
+      setChartType(activeChart.id, type);
+    }
+    if (typeof updateChart === "function") {
+      updateChart(activeChart.id, {
+        activeType: type,
+        chart_type: type,
+      });
+    }
+  };
 
   return (
-    <div className="flex flex-wrap gap-1.5 mb-4 p-1 bg-gray-100/80 dark:bg-zinc-900 rounded-lg border border-gray-200 dark:border-zinc-800">
-      {validTypes.map(({ type, disabled, reason }) => {
-        const isActive = chart.activeType === type;
-        
+    <div className="flex flex-wrap items-center gap-2">
+      {validTypes.map((type) => {
+        const isActive = type === activeType;
+
         return (
-          <div key={type} className="relative group">
-            <button
-              onClick={() => !disabled && setActiveType(chartId, type)}
-              disabled={disabled}
-              className={`
-                flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200
-                ${isActive 
-                  ? 'bg-white text-blue-600 shadow-sm dark:bg-zinc-800 dark:text-blue-400' 
-                  : 'text-gray-600 hover:bg-gray-200/50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-zinc-800/50 dark:hover:text-gray-200'
-                }
-                ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}
-              `}
-              aria-label={`Switch to ${type}`}
-            >
-              {TYPE_ICONS[type]}
-              <span className="capitalize">{type.replace('_', ' ')}</span>
-            </button>
-            
-            {disabled && reason && (
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
-                {reason}
-                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
-              </div>
-            )}
-          </div>
+          <button
+            key={type}
+            type="button"
+            onClick={() => setType(type)}
+            className={[
+              "inline-flex items-center gap-2 rounded-xl border px-3 py-2",
+              "text-sm font-medium transition-all duration-200",
+              "focus:outline-none focus:ring-2 focus:ring-emerald-500/30",
+              isActive
+                ? "border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm"
+                : "border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:bg-emerald-50/40",
+            ].join(" ")}
+            aria-pressed={isActive}
+          >
+            {ICONS[type] || <BarChart3 size={17} />}
+            <span>{LABELS[type] || type}</span>
+          </button>
         );
       })}
     </div>
   );
 }
+
+export default ChartTypeSwitcher;

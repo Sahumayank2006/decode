@@ -37,15 +37,23 @@ class VisualExtractor:
         page_rect = page.rect
         
         # 1. Extract Tables
-        tables = page.find_tables()
-        if tables and tables.tables:
-            for tab in tables.tables:
-                elements.append({
-                    "bbox": list(tab.bbox),
-                    "type": "table",
-                    "page_number": page_num + 1,
-                    "confidence": 0.95
-                })
+        try:
+            tables = page.find_tables()
+            if tables and tables.tables:
+                for tab in tables.tables:
+                    try:
+                        raw_table = tab.extract()
+                    except Exception:
+                        raw_table = []
+                    elements.append({
+                        "bbox": list(tab.bbox),
+                        "type": "table",
+                        "page_number": page_num + 1,
+                        "confidence": 0.95,
+                        "table_data": raw_table,
+                    })
+        except Exception as e:
+            logger.warning(f"find_tables failed on page {page_num+1}: {e}")
         
         # 2. Extract Images (Figures/Photos)
         image_list = page.get_images()

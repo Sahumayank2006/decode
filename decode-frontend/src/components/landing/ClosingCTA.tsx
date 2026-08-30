@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/Button";
+import { ArrowRight, Sparkles } from "lucide-react";
 
 export function ClosingCTA() {
   const router = useRouter();
@@ -19,9 +19,23 @@ export function ClosingCTA() {
           </h2>
           
           <div className="reveal mt-12">
-            <Button variant="seal" onClick={() => router.push("/dashboard")}>
-              Begin Verification →
-            </Button>
+            <button
+              onClick={() => router.push("/demo")}
+              className="group relative inline-flex items-center justify-center gap-3 overflow-hidden rounded-full p-[2px] transition-all duration-400 hover:scale-[1.04] active:scale-[0.98] animate-gold-pulse cursor-pointer shadow-[0_12px_40px_rgba(0,0,0,0.6)]"
+            >
+              {/* Outer gold glow wrapper */}
+              <div className="absolute inset-0 rounded-full bg-gradient-to-r from-[#FFE8A3] via-[#D4AF37] to-[#9A7842] opacity-90 transition-opacity duration-300 group-hover:opacity-100" />
+              
+              {/* Inner button body */}
+              <div className="relative flex items-center justify-center gap-3 rounded-full bg-gradient-to-b from-[#FFF2B2] via-[#E8C26E] via-[40%] to-[#B8860B] px-9 py-4 font-mono text-sm md:text-base font-bold uppercase tracking-[0.12em] text-[#0B1E33] shadow-[inset_0_1px_2px_rgba(255,255,255,0.95),inset_0_-2px_4px_rgba(110,70,10,0.4)]">
+                {/* Continuous shine sweep */}
+                <div className="pointer-events-none absolute inset-0 -translate-x-full animate-gold-shine bg-gradient-to-r from-transparent via-white/75 to-transparent opacity-85" />
+                
+                <Sparkles className="h-4 w-4 text-[#0B1E33] transition-transform duration-300 group-hover:rotate-12" />
+                <span>Begin Verification</span>
+                <ArrowRight className="h-4 w-4 text-[#0B1E33] transition-transform duration-300 ease-out group-hover:translate-x-1" />
+              </div>
+            </button>
           </div>
         </div>
 

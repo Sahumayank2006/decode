@@ -1,0 +1,49 @@
+{
+  "document": "C:\\Users\\licsa\\Downloads\\decode-main\\decode-main\\DECODE_backend\\backend\\tests\\corpus\\basic\\pie_donut.pdf",
+  "success": true,
+  "charts_detected": 2,
+  "tables_detected": 0,
+  "pages": 2,
+  "total_duration_seconds": 46.37681899999734,
+  "artifacts": [
+    {
+      "artifact_id": "081775a8-1a10-4ec5-b47a-f0b362527ecf",
+      "artifact_type": "chart",
+      "extraction_success": true,
+      "canonical_success": true,
+      "visualization_success": true,
+      "svg_success": true,
+      "png_success": true,
+      "numerical_integrity": false,
+      "deterministic": false,
+      "success": true,
+      "detected_type": "chart",
+      "recommended_type": "chart",
+      "confidence": 0.0,
+      "warnings": [],
+      "errors": [],
+      "metadata": {}
+    },
+    {
+      "artifact_id": "4492263f-6dd9-4e05-a7b9-0ac6c6449ce3",
+      "artifact_type": "chart",
+      "extraction_success": true,
+      "canonical_success": true,
+      "visualization_success": true,
+      "svg_success": true,
+      "png_success": true,
+      "numerical_integrity": false,
+      "deterministic": false,
+      "success": true,
+      "detected_type": "chart",
+      "recommended_type": "chart",
+      "confidence": 0.0,
+      "warnings": [],
+      "errors": [],
+      "metadata": {}
+    }
+  ],
+  "warnings": [],
+  "errors": [],
+  "metadata": {}
+}
