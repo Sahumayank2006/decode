@@ -31,6 +31,37 @@ interface LiveReconstructedPreviewProps {
   chartContainerRef?: React.RefObject<HTMLDivElement | null> | React.MutableRefObject<HTMLDivElement | null> | any;
 }
 
+/**
+ * Returns true if the artifact is a non-numeric diagram/flow type
+ * that cannot be rendered as a chart.
+ */
+function isDiagramArtifact(artifact: ArtifactExtraction): boolean {
+  const type = (artifact.chart_type || "").toLowerCase();
+  return (
+    type === "diagram" ||
+    type === "flow" ||
+    type === "flowchart" ||
+    type === "process" ||
+    type === "pipeline" ||
+    type === "network" ||
+    type === "org_chart" ||
+    type === "architecture"
+  );
+}
+
+/**
+ * Returns true if the artifact has no numeric data to render as a chart.
+ */
+function hasNoChartData(artifact: ArtifactExtraction): boolean {
+  if (!artifact.categories || artifact.categories.length === 0) return true;
+  if (!artifact.series || artifact.series.length === 0) return true;
+  // Check if ALL values across ALL series are zero or missing
+  const hasAnyNonZero = artifact.series.some(
+    (s) => (s.values || []).some((v) => v !== 0 && v !== undefined && v !== null)
+  );
+  return !hasAnyNonZero;
+}
+
 export default function LiveReconstructedPreview({
   currentArtifact,
   renderMode,
@@ -79,6 +110,94 @@ export default function LiveReconstructedPreview({
         className="h-[380px] w-full bg-[#0f172a] rounded-2xl p-4 border border-slate-800 flex items-center justify-center relative overflow-hidden"
       >
         <p className="text-xs text-slate-500">Select an artifact to preview its reconstruction.</p>
+      </div>
+    );
+  }
+
+  // ── Diagram artifact: render image or "not chart-representable" state ──
+  if (isDiagramArtifact(currentArtifact) && renderMode !== "original" && renderMode !== "table") {
+    return (
+      <div
+        ref={chartContainerRef}
+        className="h-[380px] w-full bg-[#0f172a] rounded-2xl p-4 border border-slate-800 flex items-center justify-center relative overflow-hidden"
+      >
+        {currentArtifact.original_image_base64 ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-4">
+            <img
+              src={`data:image/png;base64,${currentArtifact.original_image_base64}`}
+              alt={currentArtifact.title || "Diagram"}
+              className="max-h-[280px] max-w-full object-contain rounded-lg shadow-lg"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase">
+                Diagram Artifact
+              </span>
+              <span className="text-[10px] text-slate-500">
+                No numeric series to chart — showing original diagram
+              </span>
+            </div>
+          </div>
+        ) : currentArtifact.original_image_path ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-4">
+            <img
+              src={`http://localhost:5000${currentArtifact.original_image_path}`}
+              alt={currentArtifact.title || "Diagram"}
+              className="max-h-[280px] max-w-full object-contain rounded-lg shadow-lg"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase">
+                Diagram Artifact
+              </span>
+              <span className="text-[10px] text-slate-500">
+                No numeric series to chart — showing original diagram
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center space-y-3">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+              <svg className="w-8 h-8 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">{currentArtifact.title || "Diagram Artifact"}</p>
+              <p className="text-xs text-slate-400 mt-1">
+                This is a diagram/flow artifact — no numeric chart series to render.
+              </p>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Switch to "Original" mode to view the extracted diagram.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── No chart data state (for artifacts with empty data) ──
+  if (hasNoChartData(currentArtifact) && renderMode !== "original" && renderMode !== "table") {
+    return (
+      <div
+        ref={chartContainerRef}
+        className="h-[380px] w-full bg-[#0f172a] rounded-2xl p-4 border border-slate-800 flex items-center justify-center relative overflow-hidden"
+      >
+        <div className="text-center space-y-3">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center">
+            <svg className="w-7 h-7 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white">{currentArtifact.title || "Artifact"}</p>
+            <p className="text-xs text-slate-400 mt-1">
+              No numeric data extracted for this artifact.
+            </p>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              Try "Original" mode to view the source image, or re-extract with different settings.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }

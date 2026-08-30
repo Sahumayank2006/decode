@@ -32,6 +32,7 @@ export interface ArtifactExtraction {
   export_png_path?: string;
   compliance?: ArtifactCompliance;
   metadata?: Record<string, unknown>;
+  error?: string;
 }
 
 export type RenderMode =
@@ -45,135 +46,34 @@ export type RenderMode =
   | "table"
   | "original";
 
-export const INITIAL_BENCHMARK_ARTIFACTS: ArtifactExtraction[] = [
-  {
-    id: "benchmark-resnet-accuracy",
-    title: "Figure 1: Cross-Architecture Image Classification Benchmark",
-    chart_type: "bar",
-    page_number: 1,
-    confidence: 0.99,
-    categories: ["ResNet-50", "ViT-Base", "Swin-Transformer", "DECODE-Vision"],
-    series: [
-      {
-        name: "Top-1 Accuracy (%)",
-        values: [78.4, 84.5, 86.3, 89.1],
-        color: "#3b82f6",
-      },
-      {
-        name: "Top-5 Accuracy (%)",
-        values: [92.1, 96.8, 97.4, 98.9],
-        color: "#10b981",
-      },
-    ],
-    compliance: {
-      overall_score: 42,
-      ssim_score: 38,
-      color_similarity: 94,
-      risk_level: "Medium Risk",
-      flags: ["Direct layout mimicry from source PDF"],
-      recommendations: ["Export in custom canonical palette for high-fidelity compliance"],
-    },
-    metadata: { source: "DECODE Benchmark Suite", model_eval: true },
-  },
-  {
-    id: "benchmark-loss-progression",
-    title: "Figure 2: Multi-Epoch Training & Validation Loss Curve",
-    chart_type: "line",
-    page_number: 2,
-    confidence: 0.98,
-    categories: ["Epoch 10", "Epoch 20", "Epoch 30", "Epoch 40", "Epoch 50", "Epoch 60"],
-    series: [
-      {
-        name: "Training Loss",
-        values: [0.82, 0.54, 0.35, 0.22, 0.15, 0.09],
-        color: "#3b82f6",
-      },
-      {
-        name: "Validation Loss",
-        values: [0.89, 0.61, 0.41, 0.28, 0.23, 0.18],
-        color: "#10b981",
-      },
-    ],
-    compliance: {
-      overall_score: 35,
-      ssim_score: 31,
-      color_similarity: 88,
-      risk_level: "Low Risk",
-      flags: [],
-      recommendations: ["Canonical vector curves verify 100% numerical accuracy"],
-    },
-    metadata: { source: "DECODE Benchmark Suite", loss_eval: true },
-  },
-  {
-    id: "benchmark-latency-breakdown",
-    title: "Figure 3: Pipeline Inference Latency Breakdown",
-    chart_type: "donut",
-    page_number: 3,
-    confidence: 0.97,
-    categories: ["PDF Ingest", "Layout Detection", "Vision Extraction", "Reconstruct Engine", "SSIM Scoring"],
-    series: [
-      {
-        name: "Latency (ms)",
-        values: [45, 120, 310, 85, 60],
-        color: "#f59e0b",
-      },
-    ],
-    compliance: {
-      overall_score: 28,
-      ssim_score: 22,
-      color_similarity: 85,
-      risk_level: "Low Risk",
-      flags: [],
-      recommendations: ["Visual layout successfully refactored from raster scan"],
-    },
-    metadata: { source: "DECODE Benchmark Suite", latency_eval: true },
-  },
-  {
-    id: "benchmark-table-matrix",
-    title: "Table 1: Scientific Vision Extraction Benchmark Comparison",
-    chart_type: "table",
-    page_number: 4,
-    confidence: 0.99,
-    categories: ["ChartQA", "PlotQA", "DocVQA", "SciGraph", "DECODE Bench"],
-    series: [
-      {
-        name: "Baseline OCR",
-        values: [54.2, 61.0, 58.7, 49.3, 56.1],
-        color: "#94a3b8",
-      },
-      {
-        name: "Gemini 1.5",
-        values: [78.9, 82.4, 86.1, 74.5, 80.2],
-        color: "#818cf8",
-      },
-      {
-        name: "DECODE Specialist",
-        values: [91.4, 94.8, 96.2, 88.7, 95.3],
-        color: "#10b981",
-      },
-    ],
-    compliance: {
-      overall_score: 18,
-      ssim_score: 12,
-      color_similarity: 90,
-      risk_level: "Low Risk",
-      flags: [],
-      recommendations: ["Tabular data parsed directly into structured matrix"],
-    },
-    metadata: { source: "DECODE Benchmark Suite", table_eval: true },
-  },
-];
+export const INITIAL_BENCHMARK_ARTIFACTS: ArtifactExtraction[] = [];
+
+const DIAGRAM_CHART_TYPES = new Set([
+  "diagram", "flow", "flowchart", "process", "pipeline",
+  "network", "org_chart", "architecture"
+]);
 
 function getInitialRenderMode(chart?: ArtifactExtraction): RenderMode {
   if (!chart) return "bar";
   const type = chart.chart_type?.toLowerCase() || "";
+
+  // Diagram / non-numeric types default to original view
+  if (DIAGRAM_CHART_TYPES.has(type)) return "original";
+
+  // No data → show original
+  if ((!chart.categories || chart.categories.length === 0) &&
+      (!chart.series || chart.series.length === 0)) {
+    return "original";
+  }
+
   if (type === "table") return "table";
-  if (type === "line" || type === "area_spline") return "line";
+  if (type === "line" || type === "multi_line" || type === "area_spline") return "line";
   if (type === "area") return "area";
   if (type === "pie") return "pie";
   if (type === "donut" || type === "doughnut") return "donut";
   if (type === "radar" || type === "spider") return "radar";
   if (type === "stacked_bar") return "stacked_bar";
+  if (type === "grouped_bar") return "bar";
   return "bar";
 }
 
@@ -211,11 +111,11 @@ export interface ArtifactStore {
 }
 
 export const useArtifactStore = create<ArtifactStore>((set, get) => ({
-  selectedArtifactId: INITIAL_BENCHMARK_ARTIFACTS[0].id,
-  artifacts: initialMap,
-  renderMode: getInitialRenderMode(INITIAL_BENCHMARK_ARTIFACTS[0]),
-  history: initialHistory,
-  historyIndex: initialHistoryIndex,
+  selectedArtifactId: null,
+  artifacts: {},
+  renderMode: "bar",
+  history: {},
+  historyIndex: {},
 
   setSelectedArtifact: (id: string) => {
     const art = get().artifacts[id];
@@ -410,11 +310,11 @@ export const useArtifactStore = create<ArtifactStore>((set, get) => ({
 
   resetToBenchmarks: () => {
     set({
-      artifacts: initialMap,
-      selectedArtifactId: INITIAL_BENCHMARK_ARTIFACTS[0].id,
-      renderMode: getInitialRenderMode(INITIAL_BENCHMARK_ARTIFACTS[0]),
-      history: initialHistory,
-      historyIndex: initialHistoryIndex,
+      artifacts: {},
+      selectedArtifactId: null,
+      renderMode: "bar",
+      history: {},
+      historyIndex: {},
     });
   },
 }));
