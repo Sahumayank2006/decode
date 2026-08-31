@@ -645,15 +645,26 @@ export function DemoWorkspace() {
   const handleSaveDemoState = async (demoId: string) => {
     try {
       setExportNotice(`Saving perfect demo state ${demoId} to backend...`);
-      await fetch(`http://localhost:8000/save_demo/${demoId}`, {
+      const response = await fetch(`http://localhost:8000/save_demo/${demoId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(artifacts)
       });
+      if (!response.ok) {
+         throw new Error(`HTTP error! status: ${response.status}`);
+      }
       setExportNotice(`Perfect demo state ${demoId} saved successfully!`);
       setTimeout(() => setExportNotice(null), 3000);
     } catch (e: any) {
-      setErrorMsg(`Failed to save demo state ${demoId}: ` + e.message);
+      console.warn("Could not save to backend, falling back to file download:", e);
+      setExportNotice(`Backend save failed. Downloading state ${demoId} as file instead...`);
+      try {
+        const blob = new Blob([JSON.stringify(artifacts, null, 2)], { type: "application/json" });
+        downloadBlob(blob, `perfect_demo_state_${demoId}.json`);
+        setTimeout(() => setExportNotice(null), 3000);
+      } catch (dlErr: any) {
+        setErrorMsg(`Failed to save demo state ${demoId}: ` + e.message);
+      }
     }
   };
 
