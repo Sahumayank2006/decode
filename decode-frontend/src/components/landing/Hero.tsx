@@ -54,6 +54,31 @@ export function Hero() {
           </div>
         </a>
       </div>
+
+      {/* Subtle Team Roster at bottom of Hero */}
+      <div className="absolute bottom-10 lg:bottom-12 left-0 right-0 w-full px-6 flex justify-center z-20">
+        <div className="flex flex-col items-center gap-5">
+          <div className="font-mono text-[9px] font-bold uppercase tracking-[0.4em] text-white/50 mb-1 flex items-center gap-3">
+             <div className="w-4 h-px bg-white/20"/> THE PROTOCOL TEAM <div className="w-4 h-px bg-white/20"/>
+          </div>
+          
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 font-mono text-[11px] lg:text-[12px] tracking-[0.25em] text-white/80 uppercase drop-shadow-md">
+            <span className="text-white font-bold drop-shadow-[0_0_8px_rgba(255,255,255,0.3)] flex items-center gap-2">MAYANK SAHU <span className="text-[var(--decode-green)] text-[9px] border border-[var(--decode-green)]/30 px-1.5 rounded bg-[var(--decode-green)]/10">LEAD</span></span>
+            <span className="hidden sm:inline w-1 h-1 bg-[var(--decode-green)]/50 rounded-full" />
+            <span>JYOTIMA TOMAR</span>
+            <span className="hidden sm:inline w-1 h-1 bg-[var(--decode-green)]/50 rounded-full" />
+            <span>VAIBHAV</span>
+            <span className="hidden sm:inline w-1 h-1 bg-[var(--decode-green)]/50 rounded-full" />
+            <span>ANSHUL</span>
+            <span className="hidden sm:inline w-1 h-1 bg-[var(--decode-green)]/50 rounded-full" />
+            <span>MUVEEN SHAH</span>
+          </div>
+          
+          <div className="mt-2 flex items-center gap-3 font-mono text-[9px] lg:text-[10px] tracking-[0.3em] text-[var(--decode-green)]/90 font-bold uppercase bg-[var(--decode-green)]/5 px-4 py-1.5 rounded-full border border-[var(--decode-green)]/20 shadow-[0_0_15px_rgba(57,217,120,0.1)]">
+             <span>MENTOR: DR. RAJEEV GOYAL</span>
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
