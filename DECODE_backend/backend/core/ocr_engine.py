@@ -14,16 +14,21 @@ from typing import Optional
 import cv2
 import numpy as np
 from PIL import Image
-import easyocr
 
-# Initialize EasyOCR globally to prevent reloading models for every request
+# EasyOCR will be loaded lazily to prevent reloading models for every request
 logger = logging.getLogger("decode.ocr")
-logger.info("Initializing EasyOCR models (this may take a moment on first run)...")
-try:
-    ocr_reader = easyocr.Reader(['en']) # Will use GPU if available, else CPU
-except Exception as e:
-    logger.error(f"Failed to initialize EasyOCR: {e}")
-    ocr_reader = None
+ocr_reader = None
+
+def get_ocr_reader():
+    global ocr_reader
+    if ocr_reader is None:
+        logger.info("Initializing EasyOCR models (this may take a moment on first run)...")
+        try:
+            import easyocr
+            ocr_reader = easyocr.Reader(['en']) # Will use GPU if available, else CPU
+        except Exception as e:
+            logger.error(f"Failed to initialize EasyOCR: {e}")
+    return ocr_reader
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Image pre-processing helpers
@@ -203,12 +208,13 @@ def ocr_image(source,
     else:
         processed = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
 
-    if not ocr_reader:
+    reader = get_ocr_reader()
+    if not reader:
         raise RuntimeError("EasyOCR reader is not initialized.")
 
     try:
         # EasyOCR readtext returns a list of tuples: (bbox, text, prob)
-        results = ocr_reader.readtext(processed)
+        results = reader.readtext(processed)
         
         words = []
         confs = []

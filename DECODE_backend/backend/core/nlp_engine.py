@@ -12,7 +12,6 @@ from collections import Counter
 from typing import Optional
 
 import nltk
-import spacy
 from nltk.corpus import stopwords
 from nltk.tokenize import sent_tokenize, word_tokenize
 
@@ -26,6 +25,7 @@ _stop_words = None
 def _get_nlp():
     global _nlp
     if _nlp is None:
+        import spacy
         _nlp = spacy.load("en_core_web_sm")
     return _nlp
 

@@ -12,7 +12,6 @@ from collections import defaultdict, Counter
 from itertools import combinations
 
 import networkx as nx
-import spacy
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -26,6 +25,7 @@ _nlp = None
 def _get_nlp():
     global _nlp
     if _nlp is None:
+        import spacy
         _nlp = spacy.load("en_core_web_sm")
     return _nlp
 
