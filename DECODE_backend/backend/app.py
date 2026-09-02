@@ -16,8 +16,11 @@ import logging
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
