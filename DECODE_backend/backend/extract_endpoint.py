@@ -1,5 +1,9 @@
 import numpy as np
 import cv2
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
