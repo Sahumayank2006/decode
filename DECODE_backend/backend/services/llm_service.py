@@ -336,6 +336,7 @@ def decode_vision_to_pipeline_format(dv: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "series": pipeline_series,
+        "categories": categories,
         "axis_labels": axis_labels,
         "legend": legend,
         "title": title,

@@ -87,8 +87,9 @@ async def extract(file: UploadFile = File(...), use_gemini: bool = True):
 
     try:
         if use_gemini:
-            from services.llm_service import get_llm
-            raw_result = get_llm().extract_with_decode_vision(image)
+            from services.llm_service import get_llm, decode_vision_to_pipeline_format
+            dv_result = get_llm().extract_with_decode_vision(image)
+            raw_result = decode_vision_to_pipeline_format(dv_result)
         else:
             raw_result = extract_chart_data(image)
     except Exception as e:
