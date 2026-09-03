@@ -125,14 +125,14 @@ export function HowItWorks() {
                   className="absolute w-1 h-1 bg-[var(--decode-green)] rounded-full shadow-[0_0_5px_var(--decode-green)]"
                   style={{ top: "50%", left: "50%" }}
                   animate={{
-                    x: [(Math.random() - 0.5) * 120, (Math.random() - 0.5) * 250],
-                    y: [(Math.random() - 0.5) * 120, (Math.random() - 0.5) * 250],
+                    x: [((i * 17) % 120) - 60, ((i * 31) % 250) - 125],
+                    y: [((i * 23) % 120) - 60, ((i * 47) % 250) - 125],
                     opacity: [0, 1, 0]
                   }}
                   transition={{
-                    duration: 2 + Math.random() * 3,
+                    duration: 2 + ((i * 7) % 3),
                     repeat: Infinity,
-                    delay: Math.random() * 2
+                    delay: ((i * 11) % 2)
                   }}
                 />
               ))}

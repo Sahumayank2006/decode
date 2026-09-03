@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // useLocalExtraction.ts
 //
 // Minimal, self-contained hook: given a chart crop image (as a File or
