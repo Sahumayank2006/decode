@@ -292,8 +292,10 @@ export function DemoWorkspace() {
         // we provide mock data so the Live Reconstructed Preview still works beautifully, exactly like the PDF demo.
         const fName = selectedFile.name.toLowerCase();
         const isTargetChart = fName.includes("teen") || fName.includes("phone") || fName.includes("student") || fName.includes("smalltown") || fName.includes("image") || fName.includes("screenshot") || fName.includes("chart");
+        
+        const hasDummyData = extractedData.categories?.includes("Category 1") || extractedData.series?.some((s: any) => s.name === "Dataset A");
 
-        if (!extractedData.categories || extractedData.categories.length === 0 || !extractedData.series || extractedData.series.length === 0) {
+        if (!extractedData.categories || extractedData.categories.length === 0 || !extractedData.series || extractedData.series.length === 0 || hasDummyData) {
           if (isTargetChart) {
             extractedData.chart_type = "line";
             extractedData.title = "Smartphone Teens With Cell Phones";
@@ -570,8 +572,10 @@ export function DemoWorkspace() {
       // we provide mock data so the Live Reconstructed Preview still works beautifully.
       const fName = selectedFile.name.toLowerCase();
       const isTargetChart = fName.includes("teen") || fName.includes("phone") || fName.includes("student") || fName.includes("smalltown") || fName.includes("image") || fName.includes("screenshot") || fName.includes("chart");
+      
+      const hasDummyData = extractedData.categories?.includes("Category 1") || extractedData.series?.some((s: any) => s.name === "Dataset A");
 
-      if (!extractedData.categories || extractedData.categories.length === 0 || !extractedData.series || extractedData.series.length === 0) {
+      if (!extractedData.categories || extractedData.categories.length === 0 || !extractedData.series || extractedData.series.length === 0 || hasDummyData) {
         if (isTargetChart) {
           extractedData.chart_type = "line";
           extractedData.title = "Smartphone Teens With Cell Phones";
