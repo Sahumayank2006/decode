@@ -167,9 +167,15 @@ export function ProtocolLedger() {
             
             {/* Animated Data Signal on Rail */}
             <div className="absolute left-8 lg:-left-[50vw] top-0 lg:top-1/2 lg:-translate-y-1/2 w-px lg:w-[200vw] h-full lg:h-px z-0 overflow-hidden">
+               {/* Mobile Rail */}
                <motion.div 
-                 className="absolute top-0 left-0 lg:top-auto lg:h-px lg:w-[30vw] h-[30vh] w-px bg-gradient-to-b lg:bg-gradient-to-r from-transparent via-[var(--decode-green)] to-transparent opacity-80"
-                 style={{ [typeof window !== 'undefined' && window.innerWidth >= 1024 ? 'left' : 'top']: railProgress }}
+                 className="absolute lg:hidden left-0 w-px h-[30vh] bg-gradient-to-b from-transparent via-[var(--decode-green)] to-transparent opacity-80"
+                 style={{ top: railProgress }}
+               />
+               {/* Desktop Rail */}
+               <motion.div 
+                 className="absolute hidden lg:block top-0 h-px w-[30vw] bg-gradient-to-r from-transparent via-[var(--decode-green)] to-transparent opacity-80"
+                 style={{ left: railProgress }}
                />
             </div>
 
