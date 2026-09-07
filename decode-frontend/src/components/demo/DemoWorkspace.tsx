@@ -1320,13 +1320,6 @@ export function DemoWorkspace() {
                       >
                         <ImageIcon className="w-3.5 h-3.5 text-emerald-400" /> Download Original (PNG)
                       </button>
-                      <button
-                        onClick={handleExportOriginalSVG}
-                        className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm"
-                        title="Download the original extracted image packaged in vector SVG"
-                      >
-                        <Download className="w-3.5 h-3.5 text-cyan-400" /> Download Original (SVG)
-                      </button>
                     </div>
                     <button
                       onClick={() => replaceImageRef.current?.click()}
